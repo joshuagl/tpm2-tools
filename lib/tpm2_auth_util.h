@@ -84,6 +84,7 @@ bool tpm2b_auth_update(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, void *udata);
 bool tpm2_auth_util_free(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth);
 
 /**
+ * TODO REMOVE ME and replace with tpm2_auth_util_from_options
  * Convert a password argument to a valid TPM2B_AUTH structure. Passwords can
  * be specified in two forms: string and hex-string and are identified by a
  * prefix of str: and hex: respectively. No prefix assumes the str form.

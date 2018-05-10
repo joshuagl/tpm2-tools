@@ -50,14 +50,19 @@
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
+typedef struct hmac_update_cb_data hmac_update_cb_data;
+struct hmac_update_cb_data {
+    UINT16 offset;
+    TPM2B_MAX_NV_BUFFER *nv_write_data;
+};
+
 typedef struct tpm_nvwrite_ctx tpm_nvwrite_ctx;
 struct tpm_nvwrite_ctx {
     UINT32 nv_index;
     UINT16 data_size;
     UINT8 nv_buffer[TPM2_MAX_NV_BUFFER_SIZE];
     struct {
-        TPMS_AUTH_COMMAND session_data;
-        tpm2_session *session;
+        tpm2_auth authorizations;
         TPMI_RH_PROVISION hierarchy;
     } auth;
     FILE *input_file;
@@ -67,25 +72,20 @@ struct tpm_nvwrite_ctx {
     TPML_PCR_SELECTION pcr_selection;
     struct {
         UINT8 L : 1;
-        UINT8 P : 1;
         UINT8 a : 1;
     } flags;
-    char *hierarchy_auth_str;
 };
 
 static tpm_nvwrite_ctx ctx = {
     .auth = {
-            .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-            .hierarchy = TPM2_RH_OWNER
+        .hierarchy = TPM2_RH_OWNER,
+        .authorizations = TPM2_AUTH_INIT
     }
 };
 
 static bool nv_write(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPM2B_MAX_NV_BUFFER nv_write_data;
-
-    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
-    TSS2L_SYS_AUTH_COMMAND sessions_data = { 1, { ctx.auth.session_data }};
 
     UINT16 data_offset = 0;
 
@@ -135,9 +135,19 @@ static bool nv_write(TSS2_SYS_CONTEXT *sapi_context) {
 
         memcpy(nv_write_data.buffer, &ctx.nv_buffer[data_offset], nv_write_data.size);
 
+        hmac_update_cb_data udata = {
+            .offset = data_offset,
+            .nv_write_data = &nv_write_data
+        };
+
+        res = tpm2b_auth_update(sapi_context, &ctx.auth.authorizations, &udata);
+        if (!res) {
+            LOG_ERR("Error updating authentications");
+        }
+
         TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_NV_Write(sapi_context,
-                ctx.auth.hierarchy, ctx.nv_index, &sessions_data, &nv_write_data,
-                ctx.offset + data_offset, &sessions_data_out));
+                ctx.auth.hierarchy, ctx.nv_index, &ctx.auth.authorizations.auth_list, &nv_write_data,
+                ctx.offset + data_offset, &ctx.auth.authorizations.resp_list));
         if (rval != TPM2_RC_SUCCESS) {
             LOG_ERR("Failed to write NV area at index 0x%X", ctx.nv_index);
             LOG_PERR(Tss2_Sys_NV_Write, rval);
@@ -180,8 +190,11 @@ static bool on_option(char key, char *value) {
         ctx.flags.a = 1;
         break;
     case 'P':
-        ctx.flags.P = 1;
-        ctx.hierarchy_auth_str = value;
+        result = tpm2_auth_util_set_opt(value, &ctx.auth.authorizations);
+        if (!result) {
+            LOG_ERR("Invalid handle authorization, got\"%s\"", value);
+            return false;
+        }
         break;
     case 'o':
         if (!tpm2_util_string_to_uint16(value, &ctx.offset)) {
@@ -189,15 +202,6 @@ static bool on_option(char key, char *value) {
                     value);
             return false;
         }
-        break;
-    case 'L':
-        if (!pcr_parse_selections(value, &ctx.pcr_selection)) {
-            return false;
-        }
-        ctx.flags.L = 1;
-        break;
-    case 'F':
-        ctx.raw_pcrs_file = value;
         break;
     }
 
@@ -240,55 +244,52 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
     return *opts != NULL;
 }
 
-static bool start_auth_session(TSS2_SYS_CONTEXT *sapi_context) {
+static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
 
-    tpm2_session_data *session_data =
-            tpm2_session_data_new(TPM2_SE_POLICY);
-    if (!session_data) {
-        LOG_ERR("oom");
+    hmac_update_cb_data *udata = (hmac_update_cb_data *)userdata;
+
+    TSS2_RC rval = TSS2_RETRY_EXP( Tss2_Sys_NV_Write_Prepare(sapi_context,
+                                ctx.auth.hierarchy, ctx.nv_index, udata->nv_write_data,
+                                ctx.offset + udata->offset));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_NV_Write_Prepare, rval);
         return false;
     }
-
-    ctx.auth.session = tpm2_session_new(sapi_context,
-            session_data);
-    if (!ctx.auth.session) {
-        LOG_ERR("Could not start tpm session");
-        return false;
-    }
-
-    bool result = tpm2_policy_build_pcr(sapi_context, ctx.auth.session,
-            ctx.raw_pcrs_file,
-            &ctx.pcr_selection);
-    if (!result) {
-        LOG_ERR("Could not build a pcr policy");
-        return false;
-    }
-
-    ctx.auth.session_data.sessionHandle = tpm2_session_get_handle(ctx.auth.session);
-    ctx.auth.session_data.sessionAttributes |= TPMA_SESSION_CONTINUESESSION;
 
     return true;
 }
 
+static bool hmac_init_cb(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[2] = {
+            ctx.auth.hierarchy,
+            ctx.nv_index
+    };
+
+    tpm2_session_set_auth_handles(d, handles);
+
+    return true;
+}
 
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     UNUSED(flags);
 
     int rc = 1;
-    bool result;
 
-    if (ctx.flags.L && ctx.auth.session) {
-        LOG_ERR("Can only use either existing session or a new session,"
-                " not both!");
-        goto out;
-    }
-
-    if (ctx.flags.L) {
-        result = start_auth_session(sapi_context);
-        if (!result) {
-            goto out;
+    tpm2_auth_cb auth_cb = {
+        .hmac = {
+            .init = hmac_init_cb,
+            .update = hmac_update_cb
         }
+    };
+
+    bool result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auth.authorizations, &auth_cb,
+            true);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms");
+        goto out;
     }
 
     /* If the users doesn't specify an auth-hierarchy use the index passed to
@@ -306,16 +307,6 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         LOG_ERR("File larger than TPM2_MAX_NV_BUFFER_SIZE, got %lu expected %u", file_size,
                 TPM2_MAX_NV_BUFFER_SIZE);
         goto out;
-    }
-
-    if (ctx.flags.P) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.hierarchy_auth_str,
-                &ctx.auth.session_data, &ctx.auth.session);
-        if (!result) {
-            LOG_ERR("Invalid handle authorization, got\"%s\"",
-                ctx.hierarchy_auth_str);
-            goto out;
-        }
     }
 
     if (result) {
@@ -354,27 +345,12 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     rc = 0;
-
 out:
 
-    if (ctx.flags.L) {
-        TSS2_RC rval = Tss2_Sys_FlushContext(sapi_context,
-                ctx.auth.session_data.sessionHandle);
-        if (rval != TPM2_RC_SUCCESS) {
-            LOG_PERR(Tss2_Sys_FlushContext, rval);
-            rc = 1;
-        }
-    } else {
-        result = tpm2_session_save(sapi_context, ctx.auth.session, NULL);
-        if (!result) {
-            rc = 1;
-        }
+    result = tpm2_auth_util_free(sapi_context, &ctx.auth.authorizations);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
     }
 
-    return rc;
-}
-
-void tpm2_onexit(void) {
-
-    tpm2_session_free(&ctx.auth.session);
+    return result ? rc : 1;
 }

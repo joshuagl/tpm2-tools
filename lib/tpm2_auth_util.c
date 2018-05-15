@@ -151,22 +151,22 @@ static tpm2_session_type handle_pcr(TSS2_SYS_CONTEXT *sapi, const char *spec, TP
         tpm2_session **session) {
 
     /*
-     * Handle the parsing of a PCR spec which is pcr:f=<path> or pcr:p=<pcr spec>
+     * Handle the parsing of a PCR spec which is <pcrspec>=<pcr_file>, where =<pcr_file> is optional.
      */
     TPML_PCR_SELECTION pcrs = { .count = 0 };
-    const char *pcr_file = NULL;
-    if (!strncmp(spec, "f=", 2)) {
-        pcr_file = &spec[2];
-    } else if(!strncmp(spec, "p=", 2)) {
-        const char *pcr_spec = &spec[2];
-        bool result = pcr_parse_selections(pcr_spec, &pcrs);
-        if (!result) {
-            LOG_ERR("Could not parse PCR selections, got: \"%s\"", pcr_spec);
-            return tpm2_session_fail;
-        }
-    } else {
-        LOG_ERR("Expected either a file (f=) or pcr (p=) based PCR spec,"
-                "got: \"%s\"", spec);
+
+    const char *pcr_spec = spec;
+    char *pcr_file = NULL;
+    char *split = strchr(spec, '=');
+    if (split) {
+        *split = '\0';
+        pcr_file = split + 1;
+    }
+
+    bool result = pcr_parse_selections(pcr_spec, &pcrs);
+    if (!result) {
+        LOG_ERR("Could not parse PCR selections,"
+                " got: pcrspec=\"%s\" file=\"%s\"", pcr_spec, pcr_file);
         return tpm2_session_fail;
     }
 
@@ -183,15 +183,14 @@ static tpm2_session_type handle_pcr(TSS2_SYS_CONTEXT *sapi, const char *spec, TP
         return tpm2_session_fail;
     }
 
-    bool result = tpm2_policy_build_pcr(sapi, s,
-            pcr_file,
-            &pcrs);
+    result = tpm2_policy_build_pcr(sapi, s,
+                pcr_file,
+                &pcrs);
     if (!result) {
-        LOG_ERR("Could not build a pcr policy");
-        tpm2_session_free(&s);
+        LOG_ERR("Could not start PCR policy selections,"
+                " got: pcrspec=\"%s\" file=\"%s\"", pcr_spec, pcr_file);
         return tpm2_session_fail;
     }
-
     auth->sessionHandle = tpm2_session_get_handle(s);
     auth->sessionAttributes |= TPMA_SESSION_CONTINUESESSION;
 

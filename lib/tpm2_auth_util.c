@@ -262,7 +262,14 @@ bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sapi, const char *password, TP
 }
 
 bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb,
-        bool support_sessions) {
+        bool support_sessions, unsigned max) {
+
+    /* If max is 0, it means support max number of sessions */
+    max = !max ? 3 : max;
+
+    if (max > 3 || auth->cnt > max) {
+        return false;
+    }
 
     if (!auth->cnt) {
         /*

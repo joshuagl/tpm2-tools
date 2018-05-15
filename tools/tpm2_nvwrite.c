@@ -287,7 +287,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     bool result = tpm2_auth_util_from_options(sapi_context,
             &ctx.auth.authorizations, &auth_cb,
-            true);
+            true, 0);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms");
         goto out;

@@ -102,7 +102,7 @@ static inline bool tpm2_auth_util_set_opt(const char *optarg, tpm2_auth *auth) {
  * @return
  *  True on success, or false on error.
  */
-bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb, bool support_sessions);
+bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb, bool support_sessions, unsigned max);
 
 /**
  * Called when the data used for HMAC authroizations needs to be updated. This invokes
@@ -160,7 +160,7 @@ bool tpm2_auth_util_free(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth);
  * @return
  *  true on success, false on failure.
  */
-#ifndef NO_OLD_AUTH
+#if !NO_OLD_AUTH
 bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sapi,
         const char *password, TPMS_AUTH_COMMAND *auth,
         tpm2_session **session);

@@ -420,7 +420,7 @@ static bool command_authentication_hmac(tpm2_session *hmac_session, uint8_t *cp_
 }
 
 uint8_t *get_cp_hash(TSS2_SYS_CONTEXT *sapi_context,
-    TPM2B_NAME entity_1_name, TPM2B_NAME entity_2_name) {
+    TPM2B_NAME *names, size_t len) {
 
     SHA256_CTX sha256;
     int is_success = SHA256_Init(&sha256);
@@ -442,15 +442,13 @@ uint8_t *get_cp_hash(TSS2_SYS_CONTEXT *sapi_context,
         return NULL;
     }
 
-    is_success = SHA256_Update(&sha256, entity_1_name.name, entity_1_name.size);
-    if (!is_success) {
-        LOG_ERR ("SHA256_Update failed when calculating HMAC");
-        return NULL;
-    }
-    is_success = SHA256_Update(&sha256, entity_2_name.name, entity_2_name.size);
-    if (!is_success) {
-        LOG_ERR ("SHA256_Update failed when calculating HMAC");
-        return NULL;
+    size_t i;
+    for (i=0; i < len; i++) {
+        is_success = SHA256_Update(&sha256, names[i].name, names[i].size);
+        if (!is_success) {
+            LOG_ERR ("SHA256_Update failed when calculating HMAC");
+            return NULL;
+        }
     }
 
     size_t command_params_size;
@@ -484,10 +482,10 @@ uint8_t *get_cp_hash(TSS2_SYS_CONTEXT *sapi_context,
 }
 
 static bool tpm2_hmac_auth_get_command_buffer_hmac(TSS2_SYS_CONTEXT *sapi_context, TPMS_AUTH_COMMAND *auth,
-    tpm2_session *hmac_session, TPM2B_NAME entity_1_name,
-    TPM2B_NAME entity_2_name, TPMS_AUTH_RESPONSE *response_data, char *optargs) {
+    tpm2_session *hmac_session, TPM2B_NAME *names, size_t len,
+    TPMS_AUTH_RESPONSE *response_data, char *optargs) {
 
-    uint8_t *cp_hash = get_cp_hash(sapi_context, entity_1_name, entity_2_name);
+    uint8_t *cp_hash = get_cp_hash(sapi_context, names, len);
     if (!cp_hash) {
         LOG_ERR("Command Parameter hash failed");
         return false;
@@ -498,15 +496,18 @@ static bool tpm2_hmac_auth_get_command_buffer_hmac(TSS2_SYS_CONTEXT *sapi_contex
     return true;
 }
 
+#include <assert.h>
+
 static bool tpm2b_auth_update_for_hmac(TSS2_SYS_CONTEXT *sapi,
         tpm2_auth_cb *cb, tpm2_session *s, TPMS_AUTH_COMMAND *a,
         void *udata, TPMS_AUTH_RESPONSE *response_data, char *optargs) {
 
-    const TPM2_HANDLE *h = tpm2_session_get_auth_handles(s);
+    const TPM2_HANDLE *h;
+    size_t len = tpm2_session_get_auth_handles(s, &h);
 
     unsigned i;
     TPM2B_NAME names[2];
-    for (i=0; i < 2; i++) {
+    for (i=0; i < len; i++) {
         bool result = tpm2_hmac_auth_get_entity_name(sapi, h[i], &names[i]);
         if (!result) {
             return false;
@@ -520,7 +521,7 @@ static bool tpm2b_auth_update_for_hmac(TSS2_SYS_CONTEXT *sapi,
         }
     }
 
-    return tpm2_hmac_auth_get_command_buffer_hmac(sapi, a, s, names[0], names[1],
+    return tpm2_hmac_auth_get_command_buffer_hmac(sapi, a, s, names, len,
             response_data, optargs);
 }
 

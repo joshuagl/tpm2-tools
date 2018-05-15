@@ -266,7 +266,7 @@ static bool hmac_init_cb(tpm2_session_data *d) {
             ctx.nv_index
     };
 
-    tpm2_session_set_auth_handles(d, handles);
+    tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
 
     return true;
 }

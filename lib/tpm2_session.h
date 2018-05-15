@@ -60,8 +60,9 @@ tpm2_session_data *tpm2_session_data_new(TPM2_SE type);
 void tpm2_session_data_free(tpm2_session_data **d);
 
 // TODO get the sizes known in here.
-void tpm2_session_set_auth_handles(tpm2_session_data *data, TPM2_HANDLE auth_handles[2]);
-const TPM2_HANDLE* tpm2_session_get_auth_handles(tpm2_session *session);
+bool tpm2_session_set_auth_handles(tpm2_session_data *data, TPM2_HANDLE *auth_handles, size_t len);
+
+size_t tpm2_session_get_auth_handles(tpm2_session *s, const TPM2_HANDLE **h);
 
 void tpm2_session_update_nonce_older(tpm2_session *session,
 	TPM2B_NONCE *nonce_in_response);

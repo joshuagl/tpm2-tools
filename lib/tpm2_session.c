@@ -48,6 +48,7 @@ struct tpm2_session_data {
     TPMT_SYM_DEF symmetric;
     TPMI_ALG_HASH authHash;
     TPM2B_NONCE nonce_caller;
+    size_t auth_handles_len;
     TPM2_HANDLE auth_handles[2];
 };
 
@@ -89,12 +90,21 @@ void tpm2_session_data_free(tpm2_session_data **d) {
     }
 }
 
-void tpm2_session_set_auth_handles(tpm2_session_data *data, TPM2_HANDLE auth_handles[2]) {
+bool tpm2_session_set_auth_handles(tpm2_session_data *data, TPM2_HANDLE *auth_handles, size_t len) {
+
+    if (len > ARRAY_LEN(data->auth_handles)) {
+        return false;
+    }
+
+    data->auth_handles_len = len;
     memcpy(data->auth_handles, auth_handles, sizeof(data->auth_handles));
+
+    return true;
 }
 
-const TPM2_HANDLE* tpm2_session_get_auth_handles(tpm2_session *s) {
-    return s->input->auth_handles;
+size_t tpm2_session_get_auth_handles(tpm2_session *s, const TPM2_HANDLE** h) {
+    *h = s->input->auth_handles;
+    return s->input->auth_handles_len;
 }
 
 

@@ -33,6 +33,7 @@
 
 #include <tss2/tss2_sys.h>
 
+#include "log.h"
 #include "tpm2_auth_util.h"
 #include "tpm2_util.h"
 #include "tpm2_session.h"
@@ -46,23 +47,36 @@ struct tpm2_auth_cb {
     // Others can go here if need them...
 };
 
+typedef enum tpm2_auth_types tpm2_auth_types;
+enum tpm2_auth_types {
+    tpm2_auth_password = 1 << 0,
+    tpm2_auth_session  = 1 << 1,
+    tpm2_auth_all = tpm2_auth_session | tpm2_auth_password,
+};
+
 typedef struct tpm2_auth tpm2_auth;
 struct tpm2_auth {
+    unsigned max;
+    tpm2_auth_types support;
     unsigned cnt;
     const char *optargs[3];
     tpm2_session *sessions[3];
     UINT8 hmac_indexes;
-    tpm2_auth_cb cb;
+    tpm2_auth_cb *cb;
     TSS2L_SYS_AUTH_COMMAND auth_list;
     TSS2L_SYS_AUTH_RESPONSE resp_list;
 };
 
-#define TPM2_AUTH_INIT  { \
+#define AUTH_MAX 3
+
+#define TPM2_AUTH_INIT(xmax, xsupport)  { \
+    .max = xmax, \
+    .support = xsupport,\
     .cnt = 0, \
     .optargs = { NULL, NULL, NULL }, \
     .sessions = { NULL, NULL, NULL }, \
     .hmac_indexes = 0, \
-    .cb = { .hmac = { .init = NULL, .update = NULL } }, \
+    .cb = NULL, \
     .auth_list = { \
         .count = 0, \
         .auths = { TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) }, \
@@ -80,7 +94,9 @@ struct tpm2_auth {
  */
 static inline bool tpm2_auth_util_set_opt(const char *optarg, tpm2_auth *auth) {
 
-    if (auth->cnt > 3) {
+    if (auth->cnt > auth->max) {
+        LOG_ERR("Tool only supports at most %u auth values, got: %u", auth->max,
+                auth->cnt + 1);
         return false;
     }
 
@@ -97,12 +113,10 @@ static inline bool tpm2_auth_util_set_opt(const char *optarg, tpm2_auth *auth) {
  *  The authorization structure to initialize.
  * @param cb
  *  A callback mechanism used for initializing or updating various session data.
- * @param support_sessions
- *  True if the tool supports sessions
  * @return
  *  True on success, or false on error.
  */
-bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb, bool support_sessions, unsigned max);
+bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb);
 
 /**
  * Called when the data used for HMAC authroizations needs to be updated. This invokes

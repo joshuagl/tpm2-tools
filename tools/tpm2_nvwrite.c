@@ -79,7 +79,7 @@ struct tpm_nvwrite_ctx {
 static tpm_nvwrite_ctx ctx = {
     .auth = {
         .hierarchy = TPM2_RH_OWNER,
-        .authorizations = TPM2_AUTH_INIT
+        .authorizations = TPM2_AUTH_INIT(true, AUTH_MAX)
     }
 };
 
@@ -193,7 +193,6 @@ static bool on_option(char key, char *value) {
     case 'P':
         result = tpm2_auth_util_set_opt(value, &ctx.auth.authorizations);
         if (!result) {
-            LOG_ERR("Invalid handle authorization, got\"%s\"", value);
             return false;
         }
         break;
@@ -286,8 +285,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     };
 
     bool result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auth.authorizations, &auth_cb,
-            true, 0);
+            &ctx.auth.authorizations, &auth_cb);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms");
         goto out;

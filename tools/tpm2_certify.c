@@ -76,8 +76,8 @@ struct tpm_certify_ctx {
 static tpm_certify_ctx ctx = {
     .sig_fmt = signature_format_tss,
     .auths = {
-        .object = TPM2_AUTH_INIT,
-        .key = TPM2_AUTH_INIT
+        .object = TPM2_AUTH_INIT(1, tpm2_auth_all),
+        .key = TPM2_AUTH_INIT(true, tpm2_auth_all)
     },
 };
 
@@ -196,14 +196,12 @@ static bool on_option(char key, char *value) {
     case 'p':
         result = tpm2_auth_util_set_opt(value, &ctx.auths.object);
         if (!result) {
-            LOG_ERR("Invalid object authorization, got\"%s\"", value);
             return false;
         }
         break;
     case 'K':
         result = tpm2_auth_util_set_opt(value, &ctx.auths.key);
         if (!result) {
-            LOG_ERR("Invalid key authorization, got\"%s\"", value);
             return false;
         }
         break;
@@ -286,14 +284,14 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.object, NULL, true, 1);
+            &ctx.auths.object, NULL);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for object");
         goto out;
     }
 
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.key, NULL, true, 1);
+            &ctx.auths.key, NULL);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for key");
         goto out;

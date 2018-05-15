@@ -261,13 +261,16 @@ bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sapi, const char *password, TP
     return tpm2_auth_util_from_optarg2(sapi, password, auth, session, NULL) != tpm2_session_fail;
 }
 
-bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb,
-        bool support_sessions, unsigned max) {
+bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb) {
 
-    /* If max is 0, it means support max number of sessions */
-    max = !max ? 3 : max;
+    if (auth->max > AUTH_MAX) {
+        LOG_ERR("Internal tool failure, initialized with too many auths, got: %u", auth->max);
+        return false;
+    }
 
-    if (max > 3 || auth->cnt > max) {
+    if (auth->cnt > auth->max) {
+        LOG_ERR("Maximum supported auth count exceeded, got %u, expected at most %u",
+                auth->cnt, auth->max);
         return false;
     }
 
@@ -280,14 +283,14 @@ bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_a
         return true;
     }
 
-    auth->cb = *cb;
+    auth->cb = cb;
 
     unsigned i;
     for (i=0; i < auth->cnt; i++) {
 
         const char *o = auth->optargs[i];
         TPMS_AUTH_COMMAND *a = &auth->auth_list.auths[i];
-        tpm2_session **s = support_sessions ? &auth->sessions[i] : NULL;
+        tpm2_session **s = auth->support & tpm2_auth_session ? &auth->sessions[i] : NULL;
         tpm2_session_type stype = tpm2_auth_util_from_optarg2(sapi, o, a, s, cb);
         if (stype == tpm2_session_fail) {
             tpm2_auth_util_free(sapi, auth);
@@ -514,7 +517,10 @@ bool tpm2_auth_update(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, void *udata) {
     unsigned i;
     for (i=0; i < auth->cnt; i++) {
         if (auth->hmac_indexes & (1 << i)) {
-            bool result = tpm2b_auth_update_for_hmac(sapi, &auth->cb,
+            if (!auth->cb) {
+                continue;
+            }
+            bool result = tpm2b_auth_update_for_hmac(sapi, auth->cb,
                     auth->sessions[i], &auth->auth_list.auths[i], udata,
                     &auth->resp_list.auths[i], (char *)auth->optargs[i]+HMAC_PREFIX_LEN);
             if (!result) {

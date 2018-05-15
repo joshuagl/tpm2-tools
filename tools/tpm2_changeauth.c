@@ -45,11 +45,10 @@
 typedef struct auth auth;
 struct auth {
     struct {
-        TPMS_AUTH_COMMAND auth;
-        tpm2_session *session;
+        tpm2_auth auth;
     } old;
     struct {
-        TPMS_AUTH_COMMAND auth;
+        tpm2_auth auth;
     } new;
 };
 
@@ -69,27 +68,21 @@ struct changeauth_ctx {
         UINT8 L : 1;
         UINT8 unused : 2;
     } flags;
-    char *owner_auth_str;
-    char *owner_auth_old_str;
-    char *endorse_auth_str;
-    char *endorse_auth_old_str;
-    char *lockout_auth_str;
-    char *lockout_auth_old_str;
 };
 
 static changeauth_ctx ctx = {
     .auths = {
         .owner = {
-            .old = { .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) },
-            .new = { .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) },
+            .old = { .auth = TPM2_AUTH_INIT(1, tpm2_auth_all) },
+            .new = { .auth = TPM2_AUTH_INIT(1, tpm2_auth_password) },
         },
         .endorse = {
-            .old = { .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) },
-            .new = { .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) },
+                .old = { .auth = TPM2_AUTH_INIT(1, tpm2_auth_all) },
+                .new = { .auth = TPM2_AUTH_INIT(1, tpm2_auth_password) },
         },
         .lockout = {
-            .old = { .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) },
-            .new = { .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) }
+                .old = { .auth = TPM2_AUTH_INIT(1, tpm2_auth_all) },
+                .new = { .auth = TPM2_AUTH_INIT(1, tpm2_auth_password) },
         },
     },
     .flags = { 0 },
@@ -99,13 +92,11 @@ static bool change_auth(TSS2_SYS_CONTEXT *sapi_context,
         struct auth *pwd, const char *desc,
         TPMI_RH_HIERARCHY_AUTH auth_handle) {
 
-    TSS2L_SYS_AUTH_COMMAND sessionsData = {
-        .count = 1,
-        .auths = { pwd->old.auth }
-    };
+    TPM2B_AUTH *new = &pwd->new.auth.auth_list.auths[0].hmac;
+    TSS2L_SYS_AUTH_COMMAND *sdata = &pwd->old.auth.auth_list;
 
     UINT32 rval = TSS2_RETRY_EXP(Tss2_Sys_HierarchyChangeAuth(sapi_context,
-            auth_handle, &sessionsData, &pwd->new.auth.hmac, NULL));
+            auth_handle, sdata, new, NULL));
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Tss2_Sys_HierarchyChangeAuth, rval);
         return false;
@@ -140,31 +131,50 @@ static bool change_hierarchy_auth(TSS2_SYS_CONTEXT *sapi_context) {
 
 static bool on_option(char key, char *value) {
 
+    bool result;
     switch (key) {
 
     case 'o':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.owner.new.auth);
+        if (!result) {
+            return false;
+        }
         ctx.flags.o = 1;
-        ctx.owner_auth_str = value;
         break;
     case 'e':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.endorse.new.auth);
+        if (!result) {
+            return false;
+        }
         ctx.flags.e = 1;
-        ctx.endorse_auth_str = value;
         break;
     case 'l':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.lockout.new.auth);
+        if (!result) {
+            return false;
+        }
         ctx.flags.l = 1;
-        ctx.lockout_auth_str = value;
         break;
     case 'O':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.owner.old.auth);
+        if (!result) {
+            return false;
+        }
         ctx.flags.O = 1;
-        ctx.owner_auth_old_str = value;
         break;
     case 'E':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.endorse.old.auth);
+        if (!result) {
+            return false;
+        }
         ctx.flags.E = 1;
-        ctx.endorse_auth_old_str = value;
         break;
     case 'L':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.lockout.old.auth);
+        if (!result) {
+            return false;
+        }
         ctx.flags.L = 1;
-        ctx.lockout_auth_old_str = value;
         break;
         /*no default */
     }
@@ -191,80 +201,78 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
+    int rc = 1;
     UNUSED(flags);
     bool result;
 
-    if (ctx.flags.o) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.owner_auth_str,
-                &ctx.auths.owner.new.auth, NULL);
-        if (!result) {
-            LOG_ERR("Invalid new owner authorization, got\"%s\"", ctx.owner_auth_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.owner.new.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for owner");
+        goto out;
     }
 
-    if (ctx.flags.e) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.endorse_auth_str,
-                &ctx.auths.endorse.new.auth, NULL);
-        if (!result) {
-            LOG_ERR("Invalid new endorse authorization, got\"%s\"",
-                ctx.endorse_auth_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.endorse.new.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for new endorse");
+        goto out;
     }
 
-    if (ctx.flags.l) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.lockout_auth_str,
-                &ctx.auths.lockout.new.auth, NULL);
-        if (!result) {
-            LOG_ERR("Invalid new lockout authorization, got\"%s\"",
-                ctx.lockout_auth_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.lockout.new.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for new lockout");
+        goto out;
     }
 
-    if (ctx.flags.O) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.owner_auth_old_str,
-                &ctx.auths.owner.old.auth, &ctx.auths.owner.old.session);
-        if (!result) {
-            LOG_ERR("Invalid current owner authorization, got\"%s\"",
-                ctx.owner_auth_old_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.owner.old.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for old owner");
+        goto out;
     }
 
-    if (ctx.flags.E) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.endorse_auth_old_str,
-                &ctx.auths.endorse.old.auth, &ctx.auths.endorse.old.session);
-        if (!result) {
-            LOG_ERR("Invalid current endorse authorization, got\"%s\"",
-                ctx.endorse_auth_old_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.endorse.old.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for old endorse");
+        goto out;
     }
 
-    if (ctx.flags.L) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.lockout_auth_old_str,
-                &ctx.auths.lockout.old.auth, &ctx.auths.lockout.old.session);
-        if (!result) {
-            LOG_ERR("Invalid current lockout authorization, got\"%s\"",
-                ctx.lockout_auth_old_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.lockout.old.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for old lockout");
+        goto out;
     }
+
     result = change_hierarchy_auth(sapi_context);
+    if (!result) {
+        goto out;
+    }
 
-    result &= tpm2_session_save(sapi_context, ctx.auths.endorse.old.session, NULL);
-    result &= tpm2_session_save(sapi_context, ctx.auths.owner.old.session, NULL);
-    result &= tpm2_session_save(sapi_context, ctx.auths.lockout.old.session, NULL);
+    rc = 0;
+out:
+
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.endorse.old.auth);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
+        rc = 1;
+    }
+
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.owner.old.auth);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
+        rc = 1;
+    }
+
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.lockout.old.auth);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
+        rc = 1;
+    }
 
     /* true is success, coerce to 0 for program success */
-    return result == false;
-}
-
-void tpm2_onexit(void) {
-
-    tpm2_session_free(&ctx.auths.endorse.old.session);
-    tpm2_session_free(&ctx.auths.owner.old.session);
-    tpm2_session_free(&ctx.auths.lockout.old.session);
+    return rc;
 }

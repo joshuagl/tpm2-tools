@@ -75,8 +75,8 @@ struct tpm_activatecred_ctx {
 
 static tpm_activatecred_ctx ctx = {
         .auths = {
-            .endorse = TPM2_AUTH_INIT,
-            .key = TPM2_AUTH_INIT
+            .endorse = TPM2_AUTH_INIT(1, tpm2_auth_all),
+            .key = TPM2_AUTH_INIT(1, tpm2_auth_password)
         },
 };
 
@@ -218,14 +218,12 @@ static bool on_option(char key, char *value) {
     case 'P':
         result = tpm2_auth_util_set_opt(value, &ctx.auths.key);
         if (!result) {
-            LOG_ERR("Invalid key authorization, got\"%s\"", value);
             return false;
         }
         break;
     case 'E':
         result = tpm2_auth_util_set_opt(value, &ctx.auths.endorse);
         if (!result) {
-            LOG_ERR("Invalid endorse authorization, got\"%s\"", value);
             return false;
         }
         break;
@@ -266,6 +264,8 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
+    int rc = 1;
+
     /* opts is unused, avoid compiler warning */
     UNUSED(flags);
 
@@ -292,36 +292,37 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     bool result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.key, NULL, true, 1);
+            &ctx.auths.key, NULL);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for key");
         goto out;
     }
 
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.endorse, NULL, false, 0);
+            &ctx.auths.endorse, NULL);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for endorsement hierarchy");
         goto out;
     }
 
-    int rc = 0;
     res = activate_credential_and_output(sapi_context);
     if (!res) {
-        rc = 1;
         goto out;
     }
 
+    rc = 0;
 out:
 
     result = tpm2_auth_util_free(sapi_context, &ctx.auths.key);
     if (!result) {
         LOG_ERR("Error finalizing auth data");
+        rc = 1;
     }
 
     result = tpm2_auth_util_free(sapi_context, &ctx.auths.endorse);
     if (!result) {
         LOG_ERR("Error finalizing auth data");
+        rc = 1;
     }
 
     return rc;

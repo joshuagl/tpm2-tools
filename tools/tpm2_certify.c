@@ -49,24 +49,23 @@
 
 typedef struct tpm_certify_ctx tpm_certify_ctx;
 struct tpm_certify_ctx {
-    TPMS_AUTH_COMMAND cmd_auth[2];
-    tpm2_session *session[2];
+    struct {
+        tpm2_auth object;
+        tpm2_auth key;
+    } auths;
     TPMI_ALG_HASH  halg;
     struct {
         char *attest;
         char *sig;
     } file_path;
     struct {
-        UINT16 P : 1;
         UINT16 p : 1;
         UINT16 g : 1;
         UINT16 a : 1;
         UINT16 s : 1;
         UINT16 f : 1;
-        UINT16 unused : 6;
     } flags;
-    char *object_auth_str;
-    char *key_auth_str;
+
     const char *key_context_arg;
     tpm2_loaded_object key_context_object;
     const char *context_arg;
@@ -75,11 +74,11 @@ struct tpm_certify_ctx {
 };
 
 static tpm_certify_ctx ctx = {
-    .cmd_auth = {
-        TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-        TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-    },
     .sig_fmt = signature_format_tss,
+    .auths = {
+        .object = TPM2_AUTH_INIT,
+        .key = TPM2_AUTH_INIT
+    },
 };
 
 static bool get_key_type(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT object_handle, TPMI_ALG_PUBLIC *type) {
@@ -138,8 +137,11 @@ static bool set_scheme(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT key_handle
 static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
 
     TSS2L_SYS_AUTH_COMMAND cmd_auth_array = {
-        .count = ARRAY_LEN(ctx.cmd_auth),
-        .auths = { ctx.cmd_auth[0], ctx.cmd_auth[1]}
+        .count = 2,
+        .auths = {
+            ctx.auths.object.auth_list.auths[0],
+            ctx.auths.key.auth_list.auths[0]
+        }
     };
 
     TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
@@ -182,6 +184,8 @@ static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
 
 static bool on_option(char key, char *value) {
 
+    bool result;
+
     switch (key) {
     case 'C':
         ctx.context_arg = value;
@@ -189,13 +193,19 @@ static bool on_option(char key, char *value) {
     case 'c':
         ctx.key_context_arg = value;
         break;
-    case 'P':
-        ctx.flags.P = 1;
-        ctx.object_auth_str = value;
-        break;
     case 'p':
-        ctx.flags.p = 1;
-        ctx.key_auth_str = value;
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.object);
+        if (!result) {
+            LOG_ERR("Invalid object authorization, got\"%s\"", value);
+            return false;
+        }
+        break;
+    case 'K':
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.key);
+        if (!result) {
+            LOG_ERR("Invalid key authorization, got\"%s\"", value);
+            return false;
+        }
         break;
     case 'g':
         ctx.halg = tpm2_alg_util_from_optarg(value, tpm2_alg_util_flags_hash);
@@ -246,7 +256,6 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
-    size_t i;
     int rc = 1;
     bool result;
 
@@ -276,22 +285,18 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         goto out;
     }
 
-    if (ctx.flags.P) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.object_auth_str,
-                &ctx.cmd_auth[0], &ctx.session[0]);
-        if (!result) {
-            LOG_ERR("Invalid object key authorization, got\"%s\"", ctx.object_auth_str);
-            goto out;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.object, NULL, true, 1);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for object");
+        goto out;
     }
 
-    if (ctx.flags.p) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.key_auth_str,
-                &ctx.cmd_auth[1], &ctx.session[1]);
-        if (!result) {
-            LOG_ERR("Invalid key handle authorization, got\"%s\"", ctx.key_auth_str);
-            goto out;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.key, NULL, true, 1);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for key");
+        goto out;
     }
 
     result = certify_and_save_data(sapi_context);
@@ -302,20 +307,15 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     rc = 0;
 out:
 
-    for (i=0; i < ARRAY_LEN(ctx.session); i++) {
-        result = tpm2_session_save(sapi_context, ctx.session[i], NULL);
-        if (!result) {
-            rc = 1;
-        }
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.key);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
+    }
+
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.object);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
     }
 
     return rc;
-}
-
-void tpm2_onexit(void) {
-
-    size_t i;
-    for (i=0; i < ARRAY_LEN(ctx.session); i++) {
-        tpm2_session_free(&ctx.session[i]);
-    }
 }

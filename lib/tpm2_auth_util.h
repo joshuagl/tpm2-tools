@@ -50,8 +50,14 @@ struct tpm2_auth_cb {
 typedef enum tpm2_auth_types tpm2_auth_types;
 enum tpm2_auth_types {
     tpm2_auth_password = 1 << 0,
-    tpm2_auth_session  = 1 << 1,
-    tpm2_auth_all = tpm2_auth_session | tpm2_auth_password,
+    tpm2_auth_pcr      = 1 << 1,
+    tpm2_auth_hmac     = 1 << 2,
+    tpm2_auth_session  = 1 << 3,
+    tpm2_auth_all = tpm2_auth_session
+        | tpm2_auth_password
+        | tpm2_auth_pcr
+        | tpm2_auth_hmac
+        | tpm2_auth_session,
 };
 
 typedef struct tpm2_auth tpm2_auth;

@@ -211,18 +211,21 @@ static tpm2_session_type handle_str(const char *password, TPMS_AUTH_COMMAND *aut
 }
 
 tpm2_session_type tpm2_auth_util_from_optarg2(TSS2_SYS_CONTEXT *sapi, const char *password, TPMS_AUTH_COMMAND *auth,
-        tpm2_session **session, tpm2_auth_cb *cb) {
+        tpm2_session **session, tpm2_auth_cb *cb, tpm2_auth_types support) {
 
     bool is_hex = !strncmp(password, HEX_PREFIX, HEX_PREFIX_LEN);
     if (is_hex) {
-
+        if (!(support & tpm2_auth_password)) {
+            LOG_ERR("Tool does not support passwords for this auth value");
+            return false;
+        }
         password += HEX_PREFIX_LEN;
         return handle_hex(password, auth);
     }
 
     bool is_session = !strncmp(password, SESSION_PREFIX, SESSION_PREFIX_LEN);
     if (is_session) {
-        if (!session) {
+        if (!(support & tpm2_auth_session)) {
             LOG_ERR("Tool does not support sessions for this auth value");
             return false;
         }
@@ -233,7 +236,7 @@ tpm2_session_type tpm2_auth_util_from_optarg2(TSS2_SYS_CONTEXT *sapi, const char
 
     bool is_hmac = !strncmp(password, HMAC_PREFIX, HMAC_PREFIX_LEN);
     if (is_hmac) {
-        if (!session) {
+        if (!(support & tpm2_auth_hmac)) {
             LOG_ERR("Tool does not support HMAC for this auth value");
             return false;
         }
@@ -244,7 +247,7 @@ tpm2_session_type tpm2_auth_util_from_optarg2(TSS2_SYS_CONTEXT *sapi, const char
 
     bool is_pcr = !strncmp(password, PCR_PREFIX, PCR_PREFIX_LEN);
     if (is_pcr) {
-        if (!session) {
+        if (!(support & tpm2_auth_pcr)) {
             LOG_ERR("Tool does not support PCR for this auth value");
             return false;
         }
@@ -252,13 +255,22 @@ tpm2_session_type tpm2_auth_util_from_optarg2(TSS2_SYS_CONTEXT *sapi, const char
         password += PCR_PREFIX_LEN;
         return handle_pcr(sapi, password, auth, session);
     }
+
     /* must be string, handle it */
+    if (!(support & tpm2_auth_password)) {
+        LOG_ERR("Tool does not support passwords for this auth value");
+        return false;
+    }
+
     return handle_str(password, auth);
 }
 
 bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sapi, const char *password, TPMS_AUTH_COMMAND *auth,
         tpm2_session **session) {
-    return tpm2_auth_util_from_optarg2(sapi, password, auth, session, NULL) != tpm2_session_fail;
+
+    tpm2_auth_types support = session ? tpm2_auth_all : tpm2_auth_password;
+
+    return tpm2_auth_util_from_optarg2(sapi, password, auth, session, NULL, support) != tpm2_session_fail;
 }
 
 bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb) {
@@ -290,8 +302,8 @@ bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_a
 
         const char *o = auth->optargs[i];
         TPMS_AUTH_COMMAND *a = &auth->auth_list.auths[i];
-        tpm2_session **s = auth->support & tpm2_auth_session ? &auth->sessions[i] : NULL;
-        tpm2_session_type stype = tpm2_auth_util_from_optarg2(sapi, o, a, s, cb);
+        tpm2_session **s = &auth->sessions[i];
+        tpm2_session_type stype = tpm2_auth_util_from_optarg2(sapi, o, a, s, cb, auth->support);
         if (stype == tpm2_session_fail) {
             tpm2_auth_util_free(sapi, auth);
             return false;

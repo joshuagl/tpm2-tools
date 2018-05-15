@@ -79,7 +79,7 @@ struct tpm_nvwrite_ctx {
 static tpm_nvwrite_ctx ctx = {
     .auth = {
         .hierarchy = TPM2_RH_OWNER,
-        .authorizations = TPM2_AUTH_INIT(true, AUTH_MAX)
+        .authorizations = TPM2_AUTH_INIT(AUTH_MAX, tpm2_auth_all)
     }
 };
 

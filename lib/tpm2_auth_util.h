@@ -160,8 +160,9 @@ bool tpm2_auth_util_free(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth);
  * @return
  *  true on success, false on failure.
  */
+#ifndef NO_OLD_AUTH
 bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sapi,
         const char *password, TPMS_AUTH_COMMAND *auth,
         tpm2_session **session);
-
+#endif
 #endif /* SRC_PASSWORD_UTIL_H_ */

@@ -56,21 +56,15 @@ struct tpm_activatecred_ctx {
     struct {
         UINT8 f : 1;
         UINT8 o : 1;
-        UINT8 P : 1;
-        UINT8 E : 1;
     } flags;
 
-    char *passwd_auth_str;
-    char *endorse_auth_str;
+    struct {
+        tpm2_auth endorse;
+        tpm2_auth key;
+    } auths;
 
     TPM2B_ID_OBJECT credentialBlob;
     TPM2B_ENCRYPTED_SECRET secret;
-
-    TPMS_AUTH_COMMAND auth;
-    tpm2_session *auth_session;
-
-    TPMS_AUTH_COMMAND endorse_auth;
-    tpm2_session *endorse_session;
 
     const char *output_file;
     const char *ctx_arg;
@@ -80,8 +74,10 @@ struct tpm_activatecred_ctx {
 };
 
 static tpm_activatecred_ctx ctx = {
-        .auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-        .endorse_auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+        .auths = {
+            .endorse = TPM2_AUTH_INIT,
+            .key = TPM2_AUTH_INIT
+        },
 };
 
 static bool read_cert_secret(const char *path, TPM2B_ID_OBJECT *cred,
@@ -154,20 +150,8 @@ static bool output_and_save(TPM2B_DIGEST *digest, const char *path) {
 
 static bool activate_credential_and_output(TSS2_SYS_CONTEXT *sapi_context) {
 
+    bool res = false;
     TPM2B_DIGEST certInfoData = TPM2B_TYPE_INIT(TPM2B_DIGEST, buffer);
-
-    TSS2L_SYS_AUTH_COMMAND cmd_auth_array_password = {
-        2, {
-            ctx.auth,
-            TPMS_AUTH_COMMAND_INIT(0),
-        }
-    };
-
-    TSS2L_SYS_AUTH_COMMAND cmd_auth_array_endorse = {
-        1, {
-            ctx.endorse_auth
-        }
-    };
 
     tpm2_session_data *d = tpm2_session_data_new(TPM2_SE_POLICY);
     if (!d) {
@@ -185,35 +169,39 @@ static bool activate_credential_and_output(TSS2_SYS_CONTEXT *sapi_context) {
 
 
     TPM2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PolicySecret(sapi_context, TPM2_RH_ENDORSEMENT,
-            handle, &cmd_auth_array_endorse, 0, 0, 0, 0, 0, 0, 0));
+            handle, &ctx.auths.endorse.auth_list, 0, 0, 0, 0, 0, 0, 0));
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Tss2_Sys_PolicySecret, rval);
         return false;
     }
 
-    cmd_auth_array_password.auths[1].sessionHandle = handle;
-    cmd_auth_array_password.auths[1].sessionAttributes |= 
+    ctx.auths.key.auth_list.count = 2;
+    ctx.auths.key.auth_list.auths[1].sessionHandle = handle;
+    ctx.auths.key.auth_list.auths[1].sessionAttributes |=
             TPMA_SESSION_CONTINUESESSION;
-    cmd_auth_array_password.auths[1].hmac.size = 0;
+    ctx.auths.key.auth_list.auths[1].hmac.size = 0;
 
     rval = TSS2_RETRY_EXP(Tss2_Sys_ActivateCredential(sapi_context, ctx.ctx_obj.handle,
-            ctx.key_ctx_obj.handle, &cmd_auth_array_password, &ctx.credentialBlob, &ctx.secret,
+            ctx.key_ctx_obj.handle, &ctx.auths.key.auth_list, &ctx.credentialBlob, &ctx.secret,
             &certInfoData, 0));
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Tss2_Sys_ActivateCredential, rval);
-        return false;
+        goto out;
     }
 
     // Need to flush the session here.
     rval = TSS2_RETRY_EXP(Tss2_Sys_FlushContext(sapi_context, handle));
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Tss2_Sys_FlushContext, rval);
-        return false;
+        goto out;
     }
 
-    tpm2_session_free(&session);
+    res = output_and_save(&certInfoData, ctx.output_file);
 
-    return output_and_save(&certInfoData, ctx.output_file);
+out:
+    tpm2_session_free(&session);
+    ctx.auths.key.auth_list.count = 1;
+    return res;
 }
 
 static bool on_option(char key, char *value) {
@@ -228,12 +216,18 @@ static bool on_option(char key, char *value) {
         ctx.key_ctx_arg = value;
         break;
     case 'P':
-        ctx.flags.P = 1;
-        ctx.passwd_auth_str = value;
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.key);
+        if (!result) {
+            LOG_ERR("Invalid key authorization, got\"%s\"", value);
+            return false;
+        }
         break;
     case 'E':
-        ctx.flags.E = 1;
-        ctx.endorse_auth_str = value;
+        result = tpm2_auth_util_set_opt(value, &ctx.auths.endorse);
+        if (!result) {
+            LOG_ERR("Invalid endorse authorization, got\"%s\"", value);
+            return false;
+        }
         break;
     case 'f':
         /* logs errors */
@@ -297,22 +291,18 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         return 1;
     }
 
-    if (ctx.flags.P) {
-        bool res = tpm2_auth_util_from_optarg(sapi_context, ctx.passwd_auth_str,
-                &ctx.auth, &ctx.auth_session);
-        if (!res) {
-            LOG_ERR("Invalid handle authorization, got\"%s\"", ctx.passwd_auth_str);
-            return 1;
-        }
+    bool result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.key, NULL, true, 1);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for key");
+        goto out;
     }
 
-    if (ctx.flags.E) {
-        bool res = tpm2_auth_util_from_optarg(sapi_context, ctx.endorse_auth_str,
-                &ctx.endorse_auth, &ctx.endorse_session);
-        if (!res) {
-            LOG_ERR("Invalid endorse authorization, got\"%s\"", ctx.endorse_auth_str);
-            return 1;
-        }
+    result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auths.endorse, NULL, false, 0);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms for endorsement hierarchy");
+        goto out;
     }
 
     int rc = 0;
@@ -324,22 +314,14 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
 out:
 
-    if (ctx.auth_session) {
-        res = tpm2_session_save(sapi_context, ctx.auth_session, NULL);
-        if (!res) {
-            rc = 1;
-        }
-
-        tpm2_session_free(&ctx.auth_session);
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.key);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
     }
 
-    if (ctx.endorse_session) {
-        res = tpm2_session_save(sapi_context, ctx.endorse_session, NULL);
-        if (!res) {
-            rc = 1;
-        }
-
-        tpm2_session_free(&ctx.endorse_session);
+    result = tpm2_auth_util_free(sapi_context, &ctx.auths.endorse);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
     }
 
     return rc;

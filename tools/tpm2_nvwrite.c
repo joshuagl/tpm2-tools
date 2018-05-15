@@ -140,9 +140,10 @@ static bool nv_write(TSS2_SYS_CONTEXT *sapi_context) {
             .nv_write_data = &nv_write_data
         };
 
-        res = tpm2b_auth_update(sapi_context, &ctx.auth.authorizations, &udata);
+        res = tpm2_auth_update(sapi_context, &ctx.auth.authorizations, &udata);
         if (!res) {
             LOG_ERR("Error updating authentications");
+            return false;
         }
 
         TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_NV_Write(sapi_context,

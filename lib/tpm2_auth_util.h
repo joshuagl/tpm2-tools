@@ -69,6 +69,15 @@ struct tpm2_auth {
     }, \
 }
 
+/**
+ * Add an authorization mechanism to the authorizations list.
+ * @param optarg
+ *  The option to add
+ * @param auth
+ *  The auth list to add too.
+ * @return
+ *  True on success, or False if too many auths were specified. The TPM supports 3 max.
+ */
 static inline bool tpm2_auth_util_set_opt(const char *optarg, tpm2_auth *auth) {
 
     if (auth->cnt > 3) {
@@ -79,8 +88,45 @@ static inline bool tpm2_auth_util_set_opt(const char *optarg, tpm2_auth *auth) {
     return true;
 }
 
+/**
+ * Initializes the authorization data based on the collected authorization options, starting
+ * any sessions, and setting the authorization headers.
+ * @param sapi
+ *  The system api context, used for starting and retsoring session state.
+ * @param auth
+ *  The authorization structure to initialize.
+ * @param cb
+ *  A callback mechanism used for initializing or updating various session data.
+ * @param support_sessions
+ *  True if the tool supports sessions
+ * @return
+ *  True on success, or false on error.
+ */
 bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_auth_cb *cb, bool support_sessions);
-bool tpm2b_auth_update(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, void *udata);
+
+/**
+ * Called when the data used for HMAC authroizations needs to be updated. This invokes
+ * the update callback registered in tpm2_auth_util_from_options().
+ * @param sapi
+ *  The current system api.
+ * @param auth
+ *  The current authorization structure.
+ * @param udata
+ *  Any user data specific to the command.
+ * @return
+ *  True on success, false otherwise.
+ */
+bool tpm2_auth_update(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, void *udata);
+
+/**
+ * Frees any data and closes any sessions.
+ * @param sapi
+ *  The system api context.
+ * @param auth
+ *  The auth structure to feee.
+ * @return
+ *  True on success, False otherwise.
+ */
 bool tpm2_auth_util_free(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth);
 
 /**

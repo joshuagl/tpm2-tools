@@ -502,7 +502,7 @@ static bool tpm2b_auth_update_for_hmac(TSS2_SYS_CONTEXT *sapi,
             response_data, optargs);
 }
 
-bool tpm2b_auth_update(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, void *udata) {
+bool tpm2_auth_update(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, void *udata) {
 
     unsigned i;
     for (i=0; i < auth->cnt; i++) {

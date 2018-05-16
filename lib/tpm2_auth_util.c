@@ -320,8 +320,8 @@ bool tpm2_auth_util_from_options(TSS2_SYS_CONTEXT *sapi, tpm2_auth *auth, tpm2_a
 bool tpm2_read_transient_persistent_obj_name(TSS2_SYS_CONTEXT *sapi_context,
     TPM2_HANDLE entity_handle, TPM2B_NAME *entity_name) {
 
-    TPM2B_PUBLIC object_public;
     TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
+    TPM2B_PUBLIC object_public = TPM2B_EMPTY_INIT;
     TPM2B_NAME qualified_name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
     TSS2_RC rval = TSS2_RETRY_EXP( Tss2_Sys_ReadPublic(sapi_context, entity_handle,
                                         NULL, &object_public, entity_name, &qualified_name,
@@ -343,6 +343,7 @@ bool tpm2_hmac_auth_get_entity_name(TSS2_SYS_CONTEXT *sapi_context, TPM2_HANDLE 
     //Get Entity names from handles
     switch(entity_handle & TPM2_HR_RANGE_MASK) {
         case TPM2_HR_NV_INDEX:
+            LOG_ERR("nvreadpub handle: %X", entity_handle);
             res = tpm2_util_nv_read_public2(sapi_context,entity_handle, &nv_public,
                 entity_name);
             if (!res) {
@@ -352,6 +353,7 @@ bool tpm2_hmac_auth_get_entity_name(TSS2_SYS_CONTEXT *sapi_context, TPM2_HANDLE 
             break;
         case TPM2_HR_TRANSIENT:
         case TPM2_HR_PERSISTENT:
+            LOG_ERR("transientreadpub handle: %X", entity_handle);
             res = tpm2_read_transient_persistent_obj_name(sapi_context,
                     entity_handle, entity_name);
             if (!res) {

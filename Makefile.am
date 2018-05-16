@@ -171,6 +171,9 @@ check_PROGRAMS = \
 
 TESTS += $(ALL_SYSTEM_TESTS)
 
+XFAIL_TESTS = \
+    test/integration/tests/certify.sh
+
 test_unit_test_string_bytes_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
 test_unit_test_string_bytes_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON) $(LDADD)
 test_unit_test_string_bytes_SOURCES  = test/unit/test_string_bytes.c

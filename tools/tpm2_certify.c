@@ -77,7 +77,7 @@ static tpm_certify_ctx ctx = {
     .sig_fmt = signature_format_tss,
     .auths = {
         .object = TPM2_AUTH_INIT(1, tpm2_auth_all),
-        .key = TPM2_AUTH_INIT(true, tpm2_auth_all)
+        .key    = TPM2_AUTH_INIT(1, tpm2_auth_all)
     },
 };
 
@@ -134,17 +134,15 @@ static bool set_scheme(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT key_handle
     return true;
 }
 
+typedef struct hmac_update_data hmac_update_data;
+struct hmac_update_data {
+    TPMI_DH_OBJECT objhandle;
+    TPMI_DH_OBJECT signhandle;
+    TPM2B_DATA *qdata;
+    TPMT_SIG_SCHEME *scheme;
+};
+
 static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
-
-    TSS2L_SYS_AUTH_COMMAND cmd_auth_array = {
-        .count = 2,
-        .auths = {
-            ctx.auths.object.auth_list.auths[0],
-            ctx.auths.key.auth_list.auths[0]
-        }
-    };
-
-    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
     TPM2B_DATA qualifying_data = {
         .size = 4,
@@ -158,12 +156,39 @@ static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
         return false;
     }
 
+    hmac_update_data udata = {
+            .objhandle = ctx.context_object.handle,
+            .signhandle = ctx.key_context_object.handle,
+            .qdata = &qualifying_data,
+            .scheme = &scheme,
+    };
+
+    result = tpm2_auth_update(sapi_context, &ctx.auths.object, &udata);
+    if (!result) {
+        LOG_ERR("Error updating object auth data!");
+        return false;
+    }
+
+    result = tpm2_auth_update(sapi_context, &ctx.auths.key, &udata);
+    if (!result) {
+        LOG_ERR("Error updating signing auth data!");
+        return false;
+    }
+
+    TSS2L_SYS_AUTH_COMMAND cmd_auth_array = {
+        .count = 2,
+        .auths = {
+            ctx.auths.object.auth_list.auths[0],
+            ctx.auths.key.auth_list.auths[0]
+        }
+    };
+
     TPM2B_ATTEST certify_info = {
-        .size = sizeof(certify_info)-2
+        .size = BUFFER_SIZE(TPM2B_ATTEST, attestationData)
     };
 
     TPMT_SIGNATURE signature;
-
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Certify(sapi_context, ctx.context_object.handle,
             ctx.key_context_object.handle, &cmd_auth_array, &qualifying_data, &scheme,
             &certify_info, &signature, &sessions_data_out));
@@ -180,6 +205,42 @@ static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
     }
 
     return tpm2_convert_sig(&signature, ctx.sig_fmt, ctx.file_path.sig);
+}
+
+static bool hmac_init_obj_cb(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            ctx.context_object.handle,
+    };
+
+    LOG_ERR("Setting obj handle: %X", handles[0]);
+
+    return tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+}
+
+static bool hmac_init_key_cb(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            ctx.key_context_object.handle
+    };
+
+    LOG_ERR("Setting key handle: %X", handles[0]);
+
+    return tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+}
+
+static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
+
+    hmac_update_data *u = (hmac_update_data *)userdata;
+
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Certify_Prepare(sapi_context,
+                                u->objhandle, u->signhandle, u->qdata, u->scheme));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_NV_Write_Prepare, rval);
+        return false;
+    }
+
+    return true;
 }
 
 static bool on_option(char key, char *value) {
@@ -270,7 +331,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     result = tpm2_util_object_load(sapi_context, ctx.context_arg,
             &ctx.context_object);
     if (!result) {
-        tpm2_tool_output("Failed to load context object (handle: 0x%x, path: %s).\n",
+        LOG_ERR("Failed to load context object (handle: 0x%x, path: %s).\n",
                 ctx.context_object.handle, ctx.context_object.path);
         goto out;
     }
@@ -278,20 +339,34 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     result = tpm2_util_object_load(sapi_context, ctx.key_context_arg,
             &ctx.key_context_object);
     if (!result) {
-        tpm2_tool_output("Failed to load context object for key (handle: 0x%x, path: %s).\n",
+        LOG_ERR("Failed to load context object for key (handle: 0x%x, path: %s).\n",
                 ctx.key_context_object.handle, ctx.key_context_object.path);
         goto out;
     }
 
+
+    tpm2_auth_cb auth_obj_cb = {
+        .hmac = {
+            .init = hmac_init_obj_cb,
+            .update = hmac_update_cb
+        }
+    };
+
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.object, NULL);
+            &ctx.auths.object, &auth_obj_cb);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for object");
         goto out;
     }
 
+    tpm2_auth_cb auth_key_cb = {
+        .hmac = {
+            .init = hmac_init_key_cb,
+            .update = hmac_update_cb
+        }
+    };
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.key, NULL);
+            &ctx.auths.key, &auth_key_cb);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for key");
         goto out;

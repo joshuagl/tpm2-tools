@@ -46,7 +46,7 @@ tpm2_clear
 
 tpm2_changeauth -o $ownerPasswd -e $endorsePasswd -l $lockPasswd
 
-tpm2_changeauth -O $ownerPasswd -E $endorsePasswd -L $lockPasswd -o $new_ownerPasswd -e $new_endorsePasswd -l $new_lockPasswd
+tpm2_changeauth -O "hmac:$ownerPasswd" -E "hmac:$endorsePasswd" -L $lockPasswd -o $new_ownerPasswd -e $new_endorsePasswd -l $new_lockPasswd
 
 tpm2_clear -L $new_lockPasswd
 

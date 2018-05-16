@@ -42,6 +42,12 @@
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
+typedef struct hmac_update_cb_data hmac_update_cb_data;
+struct hmac_update_cb_data {
+    TPM2B_AUTH *new;
+    TPMI_RH_HIERARCHY_AUTH handle;
+};
+
 typedef struct auth auth;
 struct auth {
     struct {
@@ -94,6 +100,17 @@ static bool change_auth(TSS2_SYS_CONTEXT *sapi_context,
 
     TPM2B_AUTH *new = &pwd->new.auth.auth_list.auths[0].hmac;
     TSS2L_SYS_AUTH_COMMAND *sdata = &pwd->old.auth.auth_list;
+
+    hmac_update_cb_data udata = {
+            .handle = auth_handle,
+            .new = new
+    };
+
+    bool result = tpm2_auth_update(sapi_context, &pwd->old.auth, &udata);
+    if (!result) {
+        LOG_ERR("Error updating authentications");
+        return false;
+    }
 
     UINT32 rval = TSS2_RETRY_EXP(Tss2_Sys_HierarchyChangeAuth(sapi_context,
             auth_handle, sdata, new, NULL));
@@ -199,6 +216,53 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
     return *opts != NULL;
 }
 
+static bool hmac_init_cb_owner(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            TPM2_RH_OWNER,
+    };
+
+    tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+
+    return true;
+}
+
+static bool hmac_init_cb_endorse(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            TPM2_RH_ENDORSEMENT,
+    };
+
+    tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+
+    return true;
+}
+
+static bool hmac_init_cb_lockout(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            TPM2_RH_LOCKOUT,
+    };
+
+    tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+
+    return true;
+}
+
+static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
+
+    hmac_update_cb_data *udata = (hmac_update_cb_data *)userdata;
+
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_HierarchyChangeAuth_Prepare(sapi_context,
+                                udata->handle, udata->new));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_NV_Write_Prepare, rval);
+        return false;
+    }
+
+    return true;
+}
+
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     int rc = 1;
@@ -226,22 +290,41 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         goto out;
     }
 
+    tpm2_auth_cb auth_cb_owner = {
+        .hmac = {
+            .init = hmac_init_cb_owner,
+            .update = hmac_update_cb
+        }
+    };
+
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.owner.old.auth, NULL);
+            &ctx.auths.owner.old.auth, &auth_cb_owner);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for old owner");
         goto out;
     }
 
+    tpm2_auth_cb auth_cb_endorse = {
+        .hmac = {
+            .init = hmac_init_cb_endorse,
+            .update = hmac_update_cb
+        }
+    };
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.endorse.old.auth, NULL);
+            &ctx.auths.endorse.old.auth, &auth_cb_endorse);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for old endorse");
         goto out;
     }
 
+    tpm2_auth_cb auth_cb_lockout = {
+        .hmac = {
+            .init = hmac_init_cb_lockout,
+            .update = hmac_update_cb
+        }
+    };
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.lockout.old.auth, NULL);
+            &ctx.auths.lockout.old.auth, &auth_cb_lockout);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for old lockout");
         goto out;

@@ -97,7 +97,7 @@ bool tpm2_session_set_auth_handles(tpm2_session_data *data, TPM2_HANDLE *auth_ha
     }
 
     data->auth_handles_len = len;
-    memcpy(data->auth_handles, auth_handles, sizeof(data->auth_handles));
+    memcpy(data->auth_handles, auth_handles, len * sizeof(*auth_handles));
 
     return true;
 }

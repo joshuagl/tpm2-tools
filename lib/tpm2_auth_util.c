@@ -496,8 +496,6 @@ static bool tpm2_hmac_auth_get_command_buffer_hmac(TSS2_SYS_CONTEXT *sapi_contex
     return true;
 }
 
-#include <assert.h>
-
 static bool tpm2b_auth_update_for_hmac(TSS2_SYS_CONTEXT *sapi,
         tpm2_auth_cb *cb, tpm2_session *s, TPMS_AUTH_COMMAND *a,
         void *udata, TPMS_AUTH_RESPONSE *response_data, char *optargs) {

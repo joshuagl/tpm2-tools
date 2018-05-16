@@ -39,38 +39,30 @@
 
 typedef struct clear_ctx clear_ctx;
 struct clear_ctx {
-    bool platform;
-    char *lockout_auth_str;
-    struct {
-        UINT8 L : 1;
-        UINT8 unused : 7;
-    } flags;
-    struct {
-        TPMS_AUTH_COMMAND session_data;
-        tpm2_session *session;
-    } auth;
+    TPMI_RH_CLEAR rh;
+    tpm2_auth auth;
 };
 
 static clear_ctx ctx = {
-    .platform = false,
-    .auth = {
-        .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-    },
+    .rh = TPM2_RH_LOCKOUT,
+    .auth = TPM2_AUTH_INIT(AUTH_MAX, tpm2_auth_all)
 };
 
 static bool clear(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TSS2L_SYS_AUTH_COMMAND sessionsData = { 1, { ctx.auth.session_data }};
     TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
-    TPMI_RH_CLEAR rh = TPM2_RH_LOCKOUT;
 
     LOG_INFO ("Sending TPM2_Clear command with %s",
-            ctx.platform ? "TPM2_RH_PLATFORM" : "TPM2_RH_LOCKOUT");
-    if (ctx.platform)
-        rh = TPM2_RH_PLATFORM;
+            ctx.rh == TPM2_RH_PLATFORM ? "TPM2_RH_PLATFORM" : "TPM2_RH_LOCKOUT");
+
+    bool result = tpm2_auth_update(sapi_context, &ctx.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error updating authentications");
+        return false;
+    }
 
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Clear (sapi_context,
-            rh, &sessionsData, &sessionsDataOut));
+            ctx.rh, &ctx.auth.auth_list, &sessionsDataOut));
     if (rval != TPM2_RC_SUCCESS && rval != TPM2_RC_INITIALIZE) {
         LOG_PERR(Tss2_Sys_Clear, rval);
         return false;
@@ -80,15 +72,41 @@ static bool clear(TSS2_SYS_CONTEXT *sapi_context) {
     return true;
 }
 
+static bool hmac_init_cb(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            ctx.rh,
+    };
+
+    return tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+}
+
+static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
+
+    UNUSED(userdata);
+
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Clear_Prepare(sapi_context,
+                                ctx.rh));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_Clear_Prepare, rval);
+        return false;
+    }
+
+    return true;
+}
+
 static bool on_option(char key, char *value) {
 
+    bool result;
     switch (key) {
     case 'p':
-        ctx.platform = true;
+        ctx.rh = TPM2_RH_PLATFORM;
         break;
     case 'L':
-        ctx.flags.L = 1;
-        ctx.lockout_auth_str = value;
+        result = tpm2_auth_util_set_opt(value, &ctx.auth);
+        if (!result) {
+            return false;
+        }
         break;
     }
 
@@ -111,25 +129,34 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     UNUSED(flags);
-    bool result = false;;
 
-    if (ctx.flags.L) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.lockout_auth_str,
-                &ctx.auth.session_data, &ctx.auth.session);
-        if (!result) {
-            LOG_ERR("Invalid lockout authorization, got\"%s\"", ctx.lockout_auth_str);
-            return false;
+    int rc = 1;
+
+    tpm2_auth_cb auth_cb = {
+        .hmac = {
+            .init = hmac_init_cb,
+            .update = hmac_update_cb
         }
+    };
+
+    bool result = tpm2_auth_util_from_options(sapi_context,
+            &ctx.auth, &auth_cb);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms");
+        goto out;
     }
 
     result = clear(sapi_context);
+    if (!result) {
+        goto out;
+    }
 
-    result &= tpm2_session_save(sapi_context, ctx.auth.session, NULL);
+    rc = 0;
+out:
+    result = tpm2_auth_util_free(sapi_context, &ctx.auth);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
+    }
 
-    return result == false;
-}
-
-void tpm2_onexit(void) {
-
-    tpm2_session_free(&ctx.auth.session);
+    return result ? rc : 1;
 }

@@ -73,6 +73,16 @@ struct tpm_activatecred_ctx {
     tpm2_loaded_object key_ctx_obj;
 };
 
+typedef struct hmac_update_cb_data hmac_update_cb_data;
+struct hmac_update_cb_data {
+    TPMI_DH_ENTITY authHandle;
+    TPMI_SH_POLICY policySession;
+    const TPM2B_NONCE *nonceTPM;
+    const TPM2B_DIGEST *cpHashA;
+    const TPM2B_NONCE *policyRef;
+    INT32 expiration;
+};
+
 static tpm_activatecred_ctx ctx = {
         .auths = {
             .endorse = TPM2_AUTH_INIT(1, tpm2_auth_all),
@@ -167,6 +177,20 @@ static bool activate_credential_and_output(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPMI_SH_AUTH_SESSION handle = tpm2_session_get_handle(session);
 
+    hmac_update_cb_data udata = {
+            .authHandle = TPM2_RH_ENDORSEMENT,
+            .policySession = handle,
+            .nonceTPM = NULL,
+            .cpHashA = NULL,
+            .policyRef = NULL,
+            .expiration = 0,
+    };
+
+    res = tpm2_auth_update(sapi_context, &ctx.auths.endorse, &udata);
+    if (!res) {
+        LOG_ERR("Error updating authentications");
+        return false;
+    }
 
     TPM2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PolicySecret(sapi_context, TPM2_RH_ENDORSEMENT,
             handle, &ctx.auths.endorse.auth_list, 0, 0, 0, 0, 0, 0, 0));
@@ -202,6 +226,38 @@ out:
     tpm2_session_free(&session);
     ctx.auths.key.auth_list.count = 1;
     return res;
+}
+
+static bool hmac_init_cb_endorse(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+            TPM2_RH_ENDORSEMENT,
+    };
+
+    tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+
+    return true;
+}
+
+static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
+
+    hmac_update_cb_data *u = (hmac_update_cb_data *)userdata;
+
+    TSS2_RC rval = TSS2_RETRY_EXP(
+            Tss2_Sys_PolicySecret_Prepare(sapi_context,
+                u->authHandle,
+                u->policySession,
+                u->nonceTPM,
+                u->cpHashA,
+                u->policyRef,
+                u->expiration
+    ));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_NV_Write_Prepare, rval);
+        return false;
+    }
+
+    return true;
 }
 
 static bool on_option(char key, char *value) {
@@ -298,8 +354,15 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         goto out;
     }
 
+    tpm2_auth_cb auth_cb_endorse = {
+        .hmac = {
+            .init = hmac_init_cb_endorse,
+            .update = hmac_update_cb
+        }
+    };
+
     result = tpm2_auth_util_from_options(sapi_context,
-            &ctx.auths.endorse, NULL);
+            &ctx.auths.endorse, &auth_cb_endorse);
     if (!result) {
         LOG_ERR("Error handling auth mechanisms for endorsement hierarchy");
         goto out;

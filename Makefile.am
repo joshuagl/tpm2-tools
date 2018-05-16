@@ -172,6 +172,7 @@ check_PROGRAMS = \
 TESTS += $(ALL_SYSTEM_TESTS)
 
 XFAIL_TESTS = \
+    test/integration/tests/activecredential.sh \
     test/integration/tests/certify.sh
 
 test_unit_test_string_bytes_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)

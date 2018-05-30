@@ -174,7 +174,8 @@ TESTS += $(ALL_SYSTEM_TESTS)
 XFAIL_TESTS = \
     test/integration/tests/activecredential.sh \
     test/integration/tests/certify.sh \
-    test/integration/tests/clear.sh
+    test/integration/tests/clear.sh \
+    test/integration/tests/clearlock.sh
 
 test_unit_test_string_bytes_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
 test_unit_test_string_bytes_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON) $(LDADD)

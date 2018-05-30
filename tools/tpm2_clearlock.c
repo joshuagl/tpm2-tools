@@ -39,39 +39,33 @@
 
 typedef struct clearlock_ctx clearlock_ctx;
 struct clearlock_ctx {
-    bool clear;
-    bool platform;
-    TPMS_AUTH_COMMAND session_data;
-    struct {
-        UINT8 L : 1;
-        UINT8 unused : 7;
-    } flags;
-    char *lockout_auth_str;
+    TPMI_YES_NO disable;
+    TPMI_RH_CLEAR rh;
+    tpm2_auth auth;
 };
 
 static clearlock_ctx ctx = {
-    .clear = false,
-    .platform = false,
-    .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-    .flags = { 0 },
+    .rh = TPM2_RH_LOCKOUT,
+    .disable = 0,
+    .auth = TPM2_AUTH_INIT(AUTH_MAX, tpm2_auth_all)
 };
 
 static bool clearlock(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TPMI_RH_CLEAR rh = ctx.platform ? TPM2_RH_PLATFORM : TPM2_RH_LOCKOUT;
-    TPMI_YES_NO disable = ctx.clear ? 0 : 1;
-
     LOG_INFO ("Sending TPM2_ClearControl(%s) command on %s",
-            ctx.clear ? "CLEAR" : "SET",
-            ctx.platform ? "TPM2_RH_PLATFORM" : "TPM2_RH_LOCKOUT");
-
-    TSS2L_SYS_AUTH_COMMAND sessionsData =
-            TSS2L_SYS_AUTH_COMMAND_INIT(1, { ctx.session_data });
+            ctx.disable ? "SET" : "CLEAR",
+            ctx.rh == TPM2_RH_PLATFORM ? "TPM2_RH_PLATFORM" : "TPM2_RH_LOCKOUT");
 
     TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
+    bool result = tpm2_auth_update(sapi_context, &ctx.auth, NULL);
+    if (!result) {
+        LOG_ERR("Error updating authentications");
+        return false;
+    }
+
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_ClearControl (sapi_context,
-            rh, &sessionsData, disable, &sessionsDataOut));
+            ctx.rh, &ctx.auth.auth_list, ctx.disable, &sessionsDataOut));
     if (rval != TPM2_RC_SUCCESS && rval != TPM2_RC_INITIALIZE) {
         LOG_PERR(Tss2_Sys_ClearControl, rval);
         return false;
@@ -81,18 +75,46 @@ static bool clearlock(TSS2_SYS_CONTEXT *sapi_context) {
     return true;
 }
 
+static bool hmac_init_cb(tpm2_session_data *d) {
+
+    TPM2_HANDLE handles[1] = {
+        ctx.rh
+    };
+
+    tpm2_session_set_auth_handles(d, handles, ARRAY_LEN(handles));
+
+    return true;
+}
+
+static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
+
+    UNUSED(userdata);
+
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_ClearControl_Prepare(sapi_context, ctx.rh, ctx.disable));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_ClearControl_Prepare, rval);
+        return false;
+    }
+
+    return true;
+} 
+
 static bool on_option(char key, char *value) {
 
+    bool result;
     switch (key) {
     case 'c':
-        ctx.clear = true;
+        ctx.disable = 1;
         break;
     case 'p':
-        ctx.platform = true;
+        ctx.rh = TPM2_RH_PLATFORM;
         break;
     case 'L':
-        ctx.flags.L = 1;
-        ctx.lockout_auth_str = value;
+        result = tpm2_auth_util_set_opt(value, &ctx.auth);
+        if (!result) {
+            LOG_ERR("Invalid authorization, got \"%s\"", value);
+            return false;
+        }
         break;
     }
 
@@ -116,16 +138,33 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     UNUSED(flags);
+    int rc = 1;
 
-    if (ctx.flags.L) {
-        bool res = tpm2_auth_util_from_optarg(sapi_context, ctx.lockout_auth_str,
-                &ctx.session_data, NULL);
-        if (!res) {
-            LOG_ERR("Invalid lockout authorization, got\"%s\"",
-                ctx.lockout_auth_str);
-            return 1;
+    tpm2_auth_cb auth_cb = {
+        .hmac = {
+            .init = hmac_init_cb,
+            .update = hmac_update_cb
         }
+    };
+
+    bool result = tpm2_auth_util_from_options(sapi_context,
+        &ctx.auth, &auth_cb);
+    if (!result) {
+        LOG_ERR("Error handling auth mechanisms");
+        goto out;
     }
 
-    return clearlock(sapi_context) != true;
+    result = clearlock(sapi_context);
+    if (!result) {
+        goto out;
+    }
+    rc = 0;
+
+out:
+    result = tpm2_auth_util_free(sapi_context, &ctx.auth);
+    if (!result) {
+        LOG_ERR("Error finalizing auth data");
+    }
+
+    return result ? rc : 1;
 }

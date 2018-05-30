@@ -44,9 +44,11 @@ trap cleanup EXIT
 start_up
 
 tpm2_clearlock
-
 tpm2_clearlock -c -p
+tpm2_clear
 
+tpm2_clearlock -L "hmac:foobar"
+tpm2_clearlock -L "hmac:foobar" -c
 tpm2_clear
 
 exit 0

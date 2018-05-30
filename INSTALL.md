@@ -197,7 +197,6 @@ $ git clone git://github.com/tpm2-software/tpm2-abrmd.git
 $ cd tpm2-abrmd
 $ ./bootstrap
 $ ./configure --with-dbuspolicydir=/etc/dbus-1/system.d
---with-udevrulesdir=/usr/lib/udev/rules.d
 --with-systemdsystemunitdir=/usr/lib/systemd/system
 --libdir=/usr/lib64 --prefix=/usr
 $ make -j5

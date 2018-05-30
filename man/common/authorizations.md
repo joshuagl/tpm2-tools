@@ -28,7 +28,7 @@ with special prefix values, they are:
 
 ## HMAC
 
-Generate an HMAC ticket for authroization. Useful for preventing a clear text password being sent to the tpm.
+Generate an HMAC ticket for authorization. Useful for preventing a clear text password being sent to the tpm.
 
 ### Example
 ```

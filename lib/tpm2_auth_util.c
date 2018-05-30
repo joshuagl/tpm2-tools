@@ -421,7 +421,7 @@ static bool command_authentication_hmac(tpm2_session *hmac_session, uint8_t *cp_
     return true;
 }
 
-uint8_t *get_cp_hash(TSS2_SYS_CONTEXT *sapi_context,
+static uint8_t *get_cp_hash(TSS2_SYS_CONTEXT *sapi_context,
     TPM2B_NAME *names, size_t len) {
 
     SHA256_CTX sha256;

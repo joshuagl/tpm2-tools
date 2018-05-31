@@ -256,7 +256,7 @@ static bool hmac_update_cb(TSS2_SYS_CONTEXT *sapi_context, void *userdata) {
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_HierarchyChangeAuth_Prepare(sapi_context,
                                 udata->handle, udata->new));
     if (rval != TSS2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_NV_Write_Prepare, rval);
+        LOG_PERR(Tss2_Sys_HierarchyChangeAuth_Prepare, rval);
         return false;
     }
 

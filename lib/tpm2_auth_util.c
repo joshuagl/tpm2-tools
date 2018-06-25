@@ -76,7 +76,7 @@ static tpm2_session_type handle_hex(const char *password, TPMS_AUTH_COMMAND *aut
     return tpm2_session_password;
 }
 
-static tpm2_session_type copy_password(TPM2B_AUTH *hmac, const char *password) {
+static bool copy_password(TPM2B_AUTH *hmac, const char *password) {
     /*
      * Per the man page:
      * "a return value of size or more means that the output was truncated."

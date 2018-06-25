@@ -118,6 +118,7 @@ static tpm2_session_type handle_hmac(TSS2_SYS_CONTEXT *sapi, const char *passwor
     *session = tpm2_session_new(sapi, d);
     if (!*session) {
         LOG_ERR("Could not start new session");
+        tpm2_session_data_free(&d);
         return tpm2_session_fail;
     }
 
@@ -170,16 +171,16 @@ static tpm2_session_type handle_pcr(TSS2_SYS_CONTEXT *sapi, const char *spec, TP
         return tpm2_session_fail;
     }
 
-    tpm2_session_data *d =
-            tpm2_session_data_new(TPM2_SE_POLICY);
+    tpm2_session_data *d = tpm2_session_data_new(TPM2_SE_POLICY);
     if (!d) {
-        LOG_ERR("oom");
+        LOG_ERR("Could not allocate new session data");
         return tpm2_session_fail;
     }
 
     tpm2_session *s = tpm2_session_new(sapi, d);
     if (!s) {
         LOG_ERR("Could not start tpm session");
+        tpm2_session_data_free(&d);
         return tpm2_session_fail;
     }
 
@@ -189,6 +190,8 @@ static tpm2_session_type handle_pcr(TSS2_SYS_CONTEXT *sapi, const char *spec, TP
     if (!result) {
         LOG_ERR("Could not start PCR policy selections,"
                 " got: pcrspec=\"%s\" file=\"%s\"", pcr_spec, pcr_file);
+        tpm2_session_data_free(&d);
+        tpm2_session_free(&s);
         return tpm2_session_fail;
     }
     auth->sessionHandle = tpm2_session_get_handle(s);

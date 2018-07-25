@@ -72,4 +72,9 @@ tpm2_evictcontrol -Q -a o -c $phandle
 
 yaml_verify evict.log
 
+# Load the context into a specific handle, delete it -- using auth
+tpm2_changeauth -Q -o "foo"
+tpm2_evictcontrol -Q -a o -c key.dat -p 0x81010003 -P "foo"
+tpm2_evictcontrol -Q -a o -c 0x81010003 -p 0x81010003 -P "foo"
+
 exit 0

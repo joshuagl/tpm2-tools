@@ -31,7 +31,7 @@
 #include <errno.h>
 #include <string.h>
 
-#include <tss2/tss2_sys.h>
+#include <tss2/tss2_esys.h>
 
 #include "log.h"
 #include "files.h"

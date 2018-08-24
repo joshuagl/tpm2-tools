@@ -108,7 +108,7 @@ static bool evaluate_populate_pcr_digests(TPML_PCR_SELECTION *pcr_selections,
     return true;
 }
 
-static bool tpm2_policy_pcr_build(TSS2_SYS_CONTEXT *sapi_context,
+static bool tpm2_policy_pcr_build(ESYS_CONTEXT *ectx,
         tpm2_session *policy_session, const char *raw_pcrs_file,
         TPML_PCR_SELECTION *pcr_selections) {
 
@@ -149,13 +149,23 @@ static bool tpm2_policy_pcr_build(TSS2_SYS_CONTEXT *sapi_context,
         fclose(fp);
     } else {
         UINT32 pcr_update_counter;
-        TPML_PCR_SELECTION pcr_selection_out;
+        TPML_DIGEST *pcr_val = &pcr_values;
         // Read PCRs
-        TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PCR_Read(sapi_context, NULL, pcr_selections,
-                &pcr_update_counter, &pcr_selection_out, &pcr_values, NULL));
+        TSS2_RC rval = Esys_PCR_Read(ectx,
+                        ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                        pcr_selections, &pcr_update_counter,
+                        NULL, &pcr_val);
         if (rval != TPM2_RC_SUCCESS) {
-            LOG_PERR(Tss2_Sys_PCR_Read, rval);
+            LOG_PERR(Esys_PCR_Read, rval);
             return false;
+        }
+
+        UINT32 i;
+        pcr_values.count = pcr_val->count;
+        for (i = 0; i < pcr_val->count; i++) {
+            memcpy(pcr_values.digests[i].buffer, pcr_val->digests[i].buffer,
+                    pcr_val->digests[i].size);
+            pcr_values.digests[i].size = pcr_val->digests[i].size;
         }
     }
 
@@ -171,26 +181,26 @@ static bool tpm2_policy_pcr_build(TSS2_SYS_CONTEXT *sapi_context,
     }
 
     // Call the PolicyPCR command
-    TPMI_SH_AUTH_SESSION handle = tpm2_session_get_handle(
-            policy_session);
+    ESYS_TR handle = tpm2_session_get_handle(policy_session);
 
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PolicyPCR(sapi_context, handle,
-    NULL, &pcr_digest, pcr_selections, NULL));
+    TSS2_RC rval = Esys_PolicyPCR(ectx, handle,
+                    ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                    &pcr_digest, pcr_selections);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_PolicyPCR, rval);
+        LOG_PERR(Esys_PolicyPCR, rval);
         return false;
     }
 
     return true;
 }
 
-bool tpm2_policy_build_pcr(TSS2_SYS_CONTEXT *sapi_context,
+bool tpm2_policy_build_pcr(ESYS_CONTEXT *ectx,
         tpm2_session *policy_session,
         const char *raw_pcrs_file,
         TPML_PCR_SELECTION *pcr_selections) {
 
     // Issue policy command.
-    bool result = tpm2_policy_pcr_build(sapi_context, policy_session,
+    bool result = tpm2_policy_pcr_build(ectx, policy_session,
             raw_pcrs_file, pcr_selections);
 
     if (!result) {
@@ -201,7 +211,7 @@ bool tpm2_policy_build_pcr(TSS2_SYS_CONTEXT *sapi_context,
 }
 
 bool tpm2_policy_build_policyauthorize(
-    TSS2_SYS_CONTEXT *sapi_context,
+    ESYS_CONTEXT *ectx,
     tpm2_session *policy_session,
     const char *policy_digest_path,
     const char *policy_qualifier_path,
@@ -284,44 +294,45 @@ bool tpm2_policy_build_policyauthorize(
         }
     }
 
-    TPMI_SH_AUTH_SESSION handle = tpm2_session_get_handle(policy_session);
-
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PolicyAuthorize(sapi_context, handle, NULL,
-        &approved_policy, &policy_qualifier, &key_sign, &check_ticket,NULL));
+    ESYS_TR sess_handle = tpm2_session_get_handle(policy_session);
+    TSS2_RC rval = Esys_PolicyAuthorize(ectx, sess_handle,
+                    ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                    &approved_policy, &policy_qualifier, &key_sign,
+                    &check_ticket);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_PolicyAuthorize, rval);
+        LOG_PERR(Esys_PolicyAuthorize, rval);
         return false;
     }
 
     return true;
 }
 
-bool tpm2_policy_build_policyor(TSS2_SYS_CONTEXT *sapi_context,
+bool tpm2_policy_build_policyor(ESYS_CONTEXT *ectx,
     tpm2_session *policy_session, TPML_DIGEST policy_list) {
 
-    TPMI_SH_POLICY policy_session_handle = tpm2_session_get_handle(policy_session);
-
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PolicyOR(sapi_context, policy_session_handle,
-        NULL, &policy_list, NULL));
-
+    ESYS_TR sess_handle = tpm2_session_get_handle(policy_session);
+    TSS2_RC rval = Esys_PolicyOR(ectx, sess_handle,
+                    ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                    &policy_list);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_PolicyOR, rval);
+        LOG_PERR(Esys_PolicyOR, rval);
         return false;
     }
 
     return true;
 }
 
-bool tpm2_policy_get_digest(TSS2_SYS_CONTEXT *sapi_context,
+bool tpm2_policy_get_digest(ESYS_CONTEXT *ectx,
         tpm2_session *session,
-        TPM2B_DIGEST *policy_digest) {
+        TPM2B_DIGEST **policy_digest) {
 
-    TPMI_SH_AUTH_SESSION handle = tpm2_session_get_handle(session);
+    ESYS_TR handle = tpm2_session_get_handle(session);
 
-    TPM2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PolicyGetDigest(sapi_context, handle,
-    NULL, policy_digest, NULL));
+    TPM2_RC rval = Esys_PolicyGetDigest(ectx, handle,
+                        ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                        policy_digest);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_PolicyGetDigest, rval);
+        LOG_PERR(Esys_PolicyGetDigest, rval);
         return false;
     }
     return true;

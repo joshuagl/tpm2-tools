@@ -33,14 +33,14 @@
 
 #include <stdbool.h>
 
-#include <tss2/tss2_sys.h>
+#include <tss2/tss2_esys.h>
 
 #include "tpm2_session.h"
 
 /**
- * Build a PCR policy via Tss2_Sys_PolicyPCR.
- * @param sapi_context
- *  The system api context.
+ * Build a PCR policy via Esys_PolicyPCR.
+ * @param context
+ *  The Enhanced System API (ESAPI) context.
  * @param policy_session
  *  A session started with tpm2_session_new().
  * @param raw_pcrs_file
@@ -53,7 +53,7 @@
  * @return
  *  true on success, false otherwise.
  */
-bool tpm2_policy_build_pcr(TSS2_SYS_CONTEXT *sapi_context,
+bool tpm2_policy_build_pcr(ESYS_CONTEXT *context,
         tpm2_session *policy_session,
         const char *raw_pcrs_file,
         TPML_PCR_SELECTION *pcr_selections);
@@ -61,8 +61,8 @@ bool tpm2_policy_build_pcr(TSS2_SYS_CONTEXT *sapi_context,
 
 /**
  * Enables a signing authority to authorize policies
- * @param sapi_context
- *   The system api context
+ * @param ectx
+ *   The Enhanced system api context
  * @param policy_session
  *   The policy session that has the policy digest to be authorized
  * @param policy_digest_path
@@ -77,7 +77,7 @@ bool tpm2_policy_build_pcr(TSS2_SYS_CONTEXT *sapi_context,
  *   true on success, false otherwise.
  */
 bool tpm2_policy_build_policyauthorize(
-    TSS2_SYS_CONTEXT *sapi_context,
+    ESYS_CONTEXT *ectx,
     tpm2_session *policy_session,
     const char *policy_digest_path,
     const char *policy_qualifier_path,
@@ -87,8 +87,8 @@ bool tpm2_policy_build_policyauthorize(
 /**
  * Compounds policies in an OR fashion
  *
- * @param sapi_context
- *   The system api context
+ * @param ectx
+ *   The Enhanced system api context
  * @param policy_session 
  *   The policy session into which the policy digest is extended into
  * @param policy_list 
@@ -97,13 +97,13 @@ bool tpm2_policy_build_policyauthorize(
  * @return
  *   true on success, false otherwise.
  */
-bool tpm2_policy_build_policyor(TSS2_SYS_CONTEXT *sapi_context,
+bool tpm2_policy_build_policyor(ESYS_CONTEXT *ectx,
     tpm2_session *policy_session, TPML_DIGEST policy_list);
 
 /**
- * Retrieves the policy digest for a session via Tss2_Sys_PolicyGetDigest.
- * @param sapi_context
- *  The system api context.
+ * Retrieves the policy digest for a session via Esys_PolicyGetDigest.
+ * @param context
+ *  The Enhanced System API (ESAPI) context.
  * @param session
  *  The session whose digest to query.
  * @param policy_digest
@@ -111,9 +111,9 @@ bool tpm2_policy_build_policyor(TSS2_SYS_CONTEXT *sapi_context,
  * @return
  *  true on success, false otherwise.
  */
-bool tpm2_policy_get_digest(TSS2_SYS_CONTEXT *sapi_context,
+bool tpm2_policy_get_digest(ESYS_CONTEXT *context,
         tpm2_session *session,
-        TPM2B_DIGEST *policy_digest_path);
+        TPM2B_DIGEST **policy_digest);
 
 /**
  * Parses the policy digest algorithm for the list of policies specified

@@ -52,7 +52,7 @@
 #include "files.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_auth_util.h"
-#include "tpm_kdfa.h"
+#include "tpm2_kdfa.h"
 #include "tpm2_errata.h"
 #include "tpm2_openssl.h"
 #include "tpm2_options.h"

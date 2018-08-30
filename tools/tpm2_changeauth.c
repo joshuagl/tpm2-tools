@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <tss2/tss2_sys.h>
+#include <tss2/tss2_esys.h>
 
 #include "log.h"
 #include "tpm2_auth_util.h"
@@ -95,19 +95,25 @@ static changeauth_ctx ctx = {
     .flags = { 0 },
 };
 
-static bool change_auth(TSS2_SYS_CONTEXT *sapi_context,
+static bool change_auth(ESYS_CONTEXT *ectx,
         struct auth *pwd, const char *desc,
-        TPMI_RH_HIERARCHY_AUTH auth_handle) {
+        ESYS_TR auth_handle) {
 
-    TSS2L_SYS_AUTH_COMMAND sessionsData = {
-        .count = 1,
-        .auths = { pwd->old.auth }
-    };
+    TSS2_RC rval;
 
-    UINT32 rval = TSS2_RETRY_EXP(Tss2_Sys_HierarchyChangeAuth(sapi_context,
-            auth_handle, &sessionsData, &pwd->new.auth.hmac, NULL));
+    ESYS_TR shandle1;
+    bool res = tpm2_auth_util_get_shandle(ectx, auth_handle,
+                    &pwd->old.auth, pwd->old.session, &shandle1);
+    if (!res) {
+        LOG_ERR("Failed to get shandle for auth");
+        return false;
+    }
+
+    rval = Esys_HierarchyChangeAuth(ectx, auth_handle,
+                shandle1, ESYS_TR_NONE, ESYS_TR_NONE,
+                &pwd->new.auth.hmac);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_HierarchyChangeAuth, rval);
+        LOG_PERR(Esys_HierarchyChangeAuth, rval);
         return false;
     }
 
@@ -116,23 +122,23 @@ static bool change_auth(TSS2_SYS_CONTEXT *sapi_context,
     return true;
 }
 
-static bool change_hierarchy_auth(TSS2_SYS_CONTEXT *sapi_context) {
+static bool change_hierarchy_auth(ESYS_CONTEXT *ectx) {
 
     // change owner, endorsement and lockout auth.
     bool result = true;
     if (ctx.flags.o || ctx.flags.O) {
-        result &= change_auth(sapi_context, &ctx.auths.owner,
-                "Owner", TPM2_RH_OWNER);
+        result &= change_auth(ectx, &ctx.auths.owner,
+                "Owner", ESYS_TR_RH_OWNER);
     }
 
     if (ctx.flags.e || ctx.flags.E) {
-        result &= change_auth(sapi_context, &ctx.auths.endorse,
-                "Endorsement", TPM2_RH_ENDORSEMENT);
+        result &= change_auth(ectx, &ctx.auths.endorse,
+                "Endorsement", ESYS_TR_RH_ENDORSEMENT);
     }
 
     if (ctx.flags.l || ctx.flags.L) {
-        result &= change_auth(sapi_context, &ctx.auths.lockout,
-                "Lockout", TPM2_RH_LOCKOUT);
+        result &= change_auth(ectx, &ctx.auths.lockout,
+                "Lockout", ESYS_TR_RH_LOCKOUT);
     }
 
     return result;
@@ -189,13 +195,13 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
     return *opts != NULL;
 }
 
-int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
+int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
 
     UNUSED(flags);
     bool result;
 
     if (ctx.flags.o) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.owner_auth_str,
+        result = tpm2_auth_util_from_optarg(ectx, ctx.owner_auth_str,
                 &ctx.auths.owner.new.auth, NULL);
         if (!result) {
             LOG_ERR("Invalid new owner authorization, got\"%s\"", ctx.owner_auth_str);
@@ -204,7 +210,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.e) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.endorse_auth_str,
+        result = tpm2_auth_util_from_optarg(ectx, ctx.endorse_auth_str,
                 &ctx.auths.endorse.new.auth, NULL);
         if (!result) {
             LOG_ERR("Invalid new endorse authorization, got\"%s\"",
@@ -214,7 +220,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.l) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.lockout_auth_str,
+        result = tpm2_auth_util_from_optarg(ectx, ctx.lockout_auth_str,
                 &ctx.auths.lockout.new.auth, NULL);
         if (!result) {
             LOG_ERR("Invalid new lockout authorization, got\"%s\"",
@@ -224,7 +230,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.O) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.owner_auth_old_str,
+        result = tpm2_auth_util_from_optarg(ectx, ctx.owner_auth_old_str,
                 &ctx.auths.owner.old.auth, &ctx.auths.owner.old.session);
         if (!result) {
             LOG_ERR("Invalid current owner authorization, got\"%s\"",
@@ -234,7 +240,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.E) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.endorse_auth_old_str,
+        result = tpm2_auth_util_from_optarg(ectx, ctx.endorse_auth_old_str,
                 &ctx.auths.endorse.old.auth, &ctx.auths.endorse.old.session);
         if (!result) {
             LOG_ERR("Invalid current endorse authorization, got\"%s\"",
@@ -244,7 +250,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.L) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.lockout_auth_old_str,
+        result = tpm2_auth_util_from_optarg(ectx, ctx.lockout_auth_old_str,
                 &ctx.auths.lockout.old.auth, &ctx.auths.lockout.old.session);
         if (!result) {
             LOG_ERR("Invalid current lockout authorization, got\"%s\"",
@@ -252,11 +258,11 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
             return 1;
         }
     }
-    result = change_hierarchy_auth(sapi_context);
+    result = change_hierarchy_auth(ectx);
 
-    result &= tpm2_session_save(sapi_context, ctx.auths.endorse.old.session, NULL);
-    result &= tpm2_session_save(sapi_context, ctx.auths.owner.old.session, NULL);
-    result &= tpm2_session_save(sapi_context, ctx.auths.lockout.old.session, NULL);
+    result &= tpm2_session_save(ectx, ctx.auths.endorse.old.session, NULL);
+    result &= tpm2_session_save(ectx, ctx.auths.owner.old.session, NULL);
+    result &= tpm2_session_save(ectx, ctx.auths.lockout.old.session, NULL);
 
     /* true is success, coerce to 0 for program success */
     return result == false;

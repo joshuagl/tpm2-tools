@@ -157,7 +157,6 @@ tools_tpm2_policyauthorize_SOURCES = tools/tpm2_policyauthorize.c $(TOOL_SRC)
 tools_tpm2_policyor_SOURCES = tools/tpm2_policyor.c $(TOOL_SRC)
 tools_tpm2_policyrestart_SOURCES = tools/tpm2_policyrestart.c $(TOOL_SRC)
 
-tools_tpm2_quote_CFLAGS = $(AM_CFLAGS) -DSAPI
 tools_tpm2_createak_CFLAGS = $(AM_CFLAGS) -DSAPI
 tools_tpm2_activatecredential_CFLAGS = $(AM_CFLAGS) -DSAPI
 tools_tpm2_nvread_CFLAGS = $(AM_CFLAGS) -DSAPI

@@ -29,9 +29,11 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //**********************************************************************;
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include <tss2/tss2_sys.h>
+#include <tss2/tss2_esys.h>
+#include <tss2/tss2_mu.h>
 
 #include "log.h"
 #include "tpm2_auth_util.h"
@@ -62,18 +64,20 @@ static bool handle_hex(const char *password, TPMS_AUTH_COMMAND *auth) {
     return true;
 }
 
-static bool handle_session(TSS2_SYS_CONTEXT *sys_ctx, const char *path, TPMS_AUTH_COMMAND *auth,
+static bool handle_session(ESYS_CONTEXT *ctx, const char *path,
+        TPMS_AUTH_COMMAND *auth,
         tpm2_session **session) {
 
+    UNUSED(auth);
+
+    bool retval = true;
     /* if it is session, then skip the prefix */
     path += SESSION_PREFIX_LEN;
 
-    *session = tpm2_session_restore(sys_ctx, path);
+    *session = tpm2_session_restore(ctx, path);
     if (!*session) {
         return false;
     }
-
-    auth->sessionHandle = tpm2_session_get_handle(*session);
 
     bool is_trial = tpm2_session_is_trial(*session);
     if (is_trial) {
@@ -83,7 +87,18 @@ static bool handle_session(TSS2_SYS_CONTEXT *sys_ctx, const char *path, TPMS_AUT
         return false;
     }
 
-    return true;
+    // TODO: is this necessary? Do we need to store the TPMI_SH_AUTH_SESSION
+    // handle in our TPMS_AUTH_COMAND auth?
+    ESYS_TR session_handle = tpm2_session_get_handle(*session);
+    TPM2_HANDLE tpm_handle;
+    retval = tpm2_util_esys_handle_to_sys_handle(ctx, session_handle,
+                &tpm_handle);
+    if (!retval) {
+        return false;
+    }
+    auth->sessionHandle = tpm_handle;
+
+    return retval;
 }
 
 static bool handle_str(const char *password, TPMS_AUTH_COMMAND *auth) {
@@ -109,7 +124,8 @@ static bool handle_str(const char *password, TPMS_AUTH_COMMAND *auth) {
     return true;
 }
 
-bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sys_ctx, const char *password, TPMS_AUTH_COMMAND *auth,
+bool tpm2_auth_util_from_optarg(ESYS_CONTEXT *ctx, const char *password,
+        TPMS_AUTH_COMMAND *auth,
         tpm2_session **session) {
 
     bool is_hex = !strncmp(password, HEX_PREFIX, HEX_PREFIX_LEN);
@@ -123,7 +139,7 @@ bool tpm2_auth_util_from_optarg(TSS2_SYS_CONTEXT *sys_ctx, const char *password,
             LOG_ERR("Tool does not support sessions for this auth value");
             return false;
         }
-        return handle_session(sys_ctx, password, auth, session);
+        return handle_session(ctx, password, auth, session);
     }
 
     /* must be string, handle it */

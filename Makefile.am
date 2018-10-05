@@ -158,7 +158,6 @@ tools_tpm2_policyor_SOURCES = tools/tpm2_policyor.c $(TOOL_SRC)
 tools_tpm2_policyrestart_SOURCES = tools/tpm2_policyrestart.c $(TOOL_SRC)
 
 tools_tpm2_activatecredential_CFLAGS = $(AM_CFLAGS) -DSAPI
-tools_tpm2_nvrelease_CFLAGS = $(AM_CFLAGS) -DSAPI
 tools_tpm2_loadexternal_CFLAGS = $(AM_CFLAGS) -DSAPI
 tools_tpm2_sign_CFLAGS = $(AM_CFLAGS) -DSAPI
 tools_tpm2_import_CFLAGS = $(AM_CFLAGS) -DSAPI

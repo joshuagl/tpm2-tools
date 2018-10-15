@@ -145,3 +145,24 @@ bool tpm2_auth_util_from_optarg(ESYS_CONTEXT *ctx, const char *password,
     /* must be string, handle it */
     return handle_str(password, auth);
 }
+
+bool tpm2_auth_util_get_shandle(ESYS_CONTEXT *ectx, ESYS_TR for_auth,
+        TPMS_AUTH_COMMAND *auth, tpm2_session *session, ESYS_TR *shandle) {
+
+    if (session) {
+        *shandle = tpm2_session_get_handle(session);
+
+        return true;
+    } else {
+        TPM2_RC rval = Esys_TR_SetAuth(ectx, for_auth, &auth->hmac);
+        if (rval != TPM2_RC_SUCCESS) {
+            *shandle = ESYS_TR_NONE;
+            return false;
+        }
+        *shandle = ESYS_TR_PASSWORD;
+
+        return true;
+    }
+
+    return false;
+}

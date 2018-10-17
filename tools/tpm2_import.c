@@ -45,7 +45,7 @@
 #include <openssl/rsa.h>
 
 #include <limits.h>
-#include <tss2/tss2_sys.h>
+#include <tss2/tss2_esys.h>
 #include <tss2/tss2_mu.h>
 
 #include "log.h"
@@ -61,7 +61,10 @@
 
 typedef struct tpm_import_ctx tpm_import_ctx;
 struct tpm_import_ctx {
-    TPMS_AUTH_COMMAND session_data;
+    struct {
+        TPMS_AUTH_COMMAND session_data;
+        tpm2_session *session;
+    } auth;
     char *input_key_file;
     char *import_key_public_file;
     char *import_key_private_file;
@@ -79,9 +82,10 @@ struct tpm_import_ctx {
 static tpm_import_ctx ctx = {
     .key_type = TPM2_ALG_ERROR,
     .input_key_file = NULL,
-    .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+    .auth.session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
 };
 
+// TODO: move to tpm2_openssl?
 #if OPENSSL_VERSION_NUMBER < 0x1010000fL || defined(LIBRESSL_VERSION_NUMBER) /* OpenSSL 1.1.0 */
 static int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d) {
 
@@ -108,16 +112,14 @@ static int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d) {
 }
 #endif
 
-static bool tpm2_readpublic(TSS2_SYS_CONTEXT *sapi, TPMI_DH_OBJECT handle, TPM2B_PUBLIC *public) {
+static bool tpm2_readpublic(ESYS_CONTEXT *ectx, ESYS_TR handle,
+                TPM2B_PUBLIC **public) {
 
-    TSS2L_SYS_AUTH_RESPONSE sessions_out_data;
-    TPM2B_NAME name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
-    TPM2B_NAME qualified_name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
-
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_ReadPublic(sapi, handle, NULL,
-            public, &name, &qualified_name, &sessions_out_data));
+    TSS2_RC rval = Esys_ReadPublic(ectx, handle,
+                    ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                    public, NULL, NULL);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_ReadPublic, rval);
+        LOG_PERR(Esys_ReadPublic, rval);
         return false;
     }
 
@@ -517,25 +519,28 @@ static void create_import_key_private_data(
             encrypted_duplicate_sensitive->size);
 }
 
-static bool do_import(TSS2_SYS_CONTEXT *sapi_context,
-        TPM2_HANDLE phandle,
+static bool do_import(ESYS_CONTEXT *ectx,
+        ESYS_TR phandle,
         TPM2B_ENCRYPTED_SECRET *encrypted_seed,
         TPM2B_DATA *enc_sensitive_key,
         TPM2B_PRIVATE *private, TPM2B_PUBLIC *public,
         TPMT_SYM_DEF_OBJECT *sym_alg,
-        TPM2B_PRIVATE *imported_private) {
+        TPM2B_PRIVATE **imported_private) {
 
-    TSS2L_SYS_AUTH_COMMAND npsessionsData =
-            TSS2L_SYS_AUTH_COMMAND_INIT(1, { ctx.session_data });
+    ESYS_TR shandle1;
+    bool ok = tpm2_auth_util_get_shandle(ectx, phandle, &ctx.auth.session_data,
+                ctx.auth.session, &shandle1);
+    if (!ok) {
+        LOG_ERR("Couldn't get shandle for phandle");
+        return false;
+    }
 
-    TSS2L_SYS_AUTH_RESPONSE npsessionsDataOut;
-
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Import(sapi_context, phandle,
-            &npsessionsData, enc_sensitive_key, public,
-            private, encrypted_seed, sym_alg,
-            imported_private, &npsessionsDataOut));
+    TSS2_RC rval = Esys_Import(ectx, phandle,
+                    shandle1, ESYS_TR_NONE, ESYS_TR_NONE,
+                    enc_sensitive_key, public, private, encrypted_seed, sym_alg,
+                    imported_private);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_PERR(Tss2_Sys_Import, rval);
+        LOG_PERR(Esys_Import, rval);
         return false;
     }
 
@@ -543,12 +548,12 @@ static bool do_import(TSS2_SYS_CONTEXT *sapi_context,
 }
 
 static bool key_import(
-        TSS2_SYS_CONTEXT *sapi_context,
+        ESYS_CONTEXT *ectx,
         TPM2B_PUBLIC *parent_pub,
-        TPM2_HANDLE phandle,
+        ESYS_TR phandle,
         TPM2B_SENSITIVE *privkey,
         TPM2B_PUBLIC *pubkey,
-        TPM2B_PRIVATE *imported_private) {
+        TPM2B_PRIVATE **imported_private) {
 
     TPMI_ALG_HASH name_alg = pubkey->publicArea.nameAlg;
 
@@ -614,7 +619,7 @@ static bool key_import(
     TPMT_SYM_DEF_OBJECT *sym_alg = &parent_pub->publicArea.parameters.rsaDetail.symmetric;
 
     return do_import(
-            sapi_context,
+            ectx,
             phandle,
             &encrypted_seed, &enc_sensitive_key,
             &private, pubkey,
@@ -736,7 +741,7 @@ static int check_options(void) {
     return rc;
 }
 
-int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
+int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
 
     UNUSED(flags);
 
@@ -756,16 +761,22 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
      * Load the parent public file, or read it from the TPM if not specified.
      * We need this information for encrypting the protection seed.
      */
-    result = tpm2_util_object_load_sapi(sapi_context, ctx.parent_ctx_arg,
+    result = tpm2_util_object_load(ectx, ctx.parent_ctx_arg,
                     &parent_ctx);
     if (!result) {
       goto out;
+    } else if (!parent_ctx.tr_handle) {
+        result = tpm2_util_sys_handle_to_esys_handle(ectx, parent_ctx.handle,
+                    &parent_ctx.tr_handle);
+        if (!result) {
+            goto out;
+        }
     }
 
-    TPM2B_PUBLIC parent_pub = TPM2B_EMPTY_INIT;
+    TPM2B_PUBLIC *parent_pub;
     result = ctx.parent_key_public_file ?
-            files_load_public(ctx.parent_key_public_file, &parent_pub) :
-            tpm2_readpublic(sapi_context, parent_ctx.handle, &parent_pub);
+            files_load_public(ctx.parent_key_public_file, parent_pub) :
+            tpm2_readpublic(ectx, parent_ctx.tr_handle, &parent_pub);
     if (!result) {
         LOG_ERR("Failed loading parent key public.");
         return false;
@@ -793,7 +804,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
          * use the parent name algorithm if not specified
          */
         public.publicArea.nameAlg =
-                parent_pub.publicArea.nameAlg;
+                parent_pub->publicArea.nameAlg;
     }
 
     /*
@@ -807,12 +818,12 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
      *   - Decription: Limits the size of the hash algorithm to less then the parent's name-alg when scheme is NULL.
      */
     UINT16 hash_size = tpm2_alg_util_get_hash_size(public.publicArea.nameAlg);
-    UINT16 parent_hash_size = tpm2_alg_util_get_hash_size(parent_pub.publicArea.nameAlg);
+    UINT16 parent_hash_size = tpm2_alg_util_get_hash_size(parent_pub->publicArea.nameAlg);
     if (hash_size > parent_hash_size) {
         LOG_WARN("Hash selected is larger then parent hash size, coercing to parent hash algorithm: %s",
-                tpm2_alg_util_algtostr(parent_pub.publicArea.nameAlg, tpm2_alg_util_flags_hash));
+                tpm2_alg_util_algtostr(parent_pub->publicArea.nameAlg, tpm2_alg_util_flags_hash));
         public.publicArea.nameAlg =
-                    parent_pub.publicArea.nameAlg;
+                    parent_pub->publicArea.nameAlg;
     }
 
     /*
@@ -833,7 +844,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     if (ctx.key_auth_str) {
         TPMS_AUTH_COMMAND tmp;
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.key_auth_str, &tmp, NULL);
+        result = tpm2_auth_util_from_optarg(ectx, ctx.key_auth_str, &tmp, NULL);
         if (!result) {
             LOG_ERR("Invalid key authorization, got\"%s\"", ctx.key_auth_str);
             return false;
@@ -842,8 +853,8 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.parent_auth_str) {
-        result = tpm2_auth_util_from_optarg(sapi_context, ctx.parent_auth_str,
-            &ctx.session_data, NULL);
+        result = tpm2_auth_util_from_optarg(ectx, ctx.parent_auth_str,
+            &ctx.auth.session_data, &ctx.auth.session);
         if (!result) {
             LOG_ERR("Invalid parent key authorization, got\"%s\"", ctx.parent_auth_str);
             return false;
@@ -863,10 +874,11 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         goto out;
     }
 
-    TPM2B_PRIVATE imported_private = TPM2B_TYPE_INIT(TPM2B_PRIVATE, buffer);
-    result = key_import(sapi_context, &parent_pub, parent_ctx.handle, &private, &public, &imported_private);
+    TPM2B_PRIVATE *imported_private;
+    result = key_import(ectx, parent_pub, parent_ctx.tr_handle,
+                &private, &public, &imported_private);
     if (!result) {
-        goto out;
+        goto keyout;
     }
 
     /*
@@ -874,12 +886,12 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
      */
     bool res = files_save_public(&public, ctx.import_key_public_file);
     if(!res) {
-        goto out;
+        goto keyout;
     }
 
-    res = files_save_private(&imported_private, ctx.import_key_private_file);
+    res = files_save_private(imported_private, ctx.import_key_private_file);
     if (!res) {
-        goto out;
+        goto keyout;
     }
 
     /*
@@ -888,6 +900,8 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     tpm2_util_public_to_yaml(&public, NULL);
 
     rc = 0;
+keyout:
+    free(imported_private);
 out:
     return rc;
 }

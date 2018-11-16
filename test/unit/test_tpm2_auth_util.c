@@ -181,7 +181,7 @@ static int teardown(void **state) {
 static void test_tpm2_auth_util_get_shandle(void **state) {
 
     ESYS_CONTEXT *ectx = (ESYS_CONTEXT *)*state;
-    ESYS_TR auth_handle;
+    ESYS_TR auth_handle = ESYS_TR_NONE;
     ESYS_TR shandle;
     TPMS_AUTH_COMMAND auth = TPMS_AUTH_COMMAND_EMPTY_INIT;
 

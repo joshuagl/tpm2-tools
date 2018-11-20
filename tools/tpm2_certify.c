@@ -49,8 +49,8 @@
 
 typedef struct tpm_certify_ctx tpm_certify_ctx;
 struct tpm_certify_ctx {
-    TPMS_AUTH_COMMAND cmd_auth[2];
-    tpm2_session *session[2];
+    TSS2L_SYS_AUTH_COMMAND cmd_auth;
+    tpm2_session *session[3];
     TPMI_ALG_HASH  halg;
     struct {
         char *attest;
@@ -66,18 +66,26 @@ struct tpm_certify_ctx {
         UINT16 unused : 6;
     } flags;
     char *object_auth_str;
-    char *key_auth_str;
-    const char *key_context_arg;
-    tpm2_loaded_object key_context_object;
     const char *context_arg;
     tpm2_loaded_object context_object;
+
+    char *key_auth_str[2];
+    const char *key_context_arg[2];
+    tpm2_loaded_object key_context_object[2];
+
+    int key_ctx_nr;
+    int key_ctx_auth_nr;
     tpm2_convert_sig_fmt sig_fmt;
 };
 
 static tpm_certify_ctx ctx = {
     .cmd_auth = {
-        TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
-        TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+        .auths = {
+             TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+             TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+             TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+        },
+        .count = 0,
     },
     .sig_fmt = signature_format_tss,
 };
@@ -145,6 +153,7 @@ static bool set_scheme(ESYS_CONTEXT *ectx, ESYS_TR key_handle,
 static bool certify_and_save_data(ESYS_CONTEXT *ectx) {
 
     TSS2_RC rval;
+    int i;
 
     TPM2B_DATA qualifying_data = {
         .size = 4,
@@ -152,7 +161,7 @@ static bool certify_and_save_data(ESYS_CONTEXT *ectx) {
     };
 
     TPMT_SIG_SCHEME scheme;
-    bool result = set_scheme(ectx, ctx.key_context_object.tr_handle, ctx.halg,
+    bool result = set_scheme(ectx, ctx.key_context_object[0].tr_handle, ctx.halg,
                     &scheme);
     if (!result) {
         LOG_ERR("No suitable signing scheme!");
@@ -161,26 +170,28 @@ static bool certify_and_save_data(ESYS_CONTEXT *ectx) {
 
     TPM2B_ATTEST *certify_info;
     TPMT_SIGNATURE *signature;
+    ESYS_TR obj_handle;
+    ESYS_TR key_handles[2];
 
-    ESYS_TR shandle1;
     result = tpm2_auth_util_get_shandle(ectx, ctx.context_object.tr_handle,
-                &ctx.cmd_auth[0], ctx.session[0], &shandle1);
+                &ctx.cmd_auth.auths[0], ctx.session[0], &obj_handle);
     if (!result) {
         LOG_ERR("Failed to get session handle for TPM object");
         return false;
     }
 
-    ESYS_TR shandle2;
-    result = tpm2_auth_util_get_shandle(ectx, ctx.key_context_object.tr_handle,
-                &ctx.cmd_auth[1], ctx.session[1], &shandle2);
-    if (!result) {
-        LOG_ERR("Failed to get session handle for key");
-        return false;
+    for (i = 0; i < ctx.key_ctx_nr; i++) {
+        result = tpm2_auth_util_get_shandle(ectx, ctx.key_context_object[i].tr_handle,
+                &ctx.cmd_auth.auths[i + 1], ctx.session[i + 1], &key_handles[i]);
+        if (!result) {
+            LOG_ERR("Failed to get session handle for TPM object");
+            return false;
+        }
     }
 
     rval = Esys_Certify(ectx, ctx.context_object.tr_handle,
-                        ctx.key_context_object.tr_handle,
-                        shandle1, shandle2, ESYS_TR_NONE,
+                        ctx.key_context_object[0].tr_handle,
+                        obj_handle, key_handles[0], key_handles[1],
                         &qualifying_data, &scheme, &certify_info,
                         &signature);
     if (rval != TPM2_RC_SUCCESS) {
@@ -211,15 +222,23 @@ static bool on_option(char key, char *value) {
         ctx.context_arg = value;
         break;
     case 'c':
-        ctx.key_context_arg = value;
+    if (ctx.key_ctx_auth_nr == 2) {
+            LOG_ERR("Too many -c options");
+            return false;
+        }
+        ctx.key_context_arg[ctx.key_ctx_nr++] = value;
         break;
     case 'P':
         ctx.flags.P = 1;
         ctx.object_auth_str = value;
         break;
     case 'p':
+    if (ctx.key_ctx_auth_nr == 2) {
+            LOG_ERR("Too many -p options");
+            return false;
+        }
         ctx.flags.p = 1;
-        ctx.key_auth_str = value;
+        ctx.key_auth_str[ctx.key_ctx_auth_nr++] = value;
         break;
     case 'g':
         ctx.halg = tpm2_alg_util_from_optarg(value, tpm2_alg_util_flags_hash);
@@ -279,7 +298,8 @@ int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
     if ((!ctx.context_arg)
         && (!ctx.key_context_arg)
         && (ctx.flags.g) && (ctx.flags.a)
-        && (ctx.flags.s)) {
+        && (ctx.flags.s)
+    && (ctx.key_ctx_nr != ctx.key_ctx_auth_nr)) {
         return -1;
     }
 
@@ -295,20 +315,22 @@ int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
             &ctx.context_object.tr_handle);
     }
 
-    result = tpm2_util_object_load(ectx, ctx.key_context_arg,
-            &ctx.key_context_object);
-    if (!result) {
-        tpm2_tool_output("Failed to load context object for key (handle: 0x%x, path: %s).\n",
-                ctx.key_context_object.handle, ctx.key_context_object.path);
-        goto out;
-    } else if (!ctx.key_context_object.tr_handle) {
-        tpm2_util_sys_handle_to_esys_handle(ectx, ctx.key_context_object.handle,
-            &ctx.key_context_object.tr_handle);
+    for (i = 0; i < (size_t) ctx.key_ctx_nr; i++) {
+        result = tpm2_util_object_load(ectx, ctx.key_context_arg[i],
+                                       &ctx.key_context_object[i]);
+        if (!result) {
+            tpm2_tool_output("Failed to load context object for key (handle: 0x%x, path: %s).\n",
+                    ctx.key_context_object[i].handle, ctx.key_context_object[i].path);
+            goto out;
+        } else if (!ctx.key_context_object[i].tr_handle) {
+            tpm2_util_sys_handle_to_esys_handle(ectx, ctx.key_context_object[i].handle,
+                                                &ctx.key_context_object[i].tr_handle);
+        }
     }
 
     if (ctx.flags.P) {
         result = tpm2_auth_util_from_optarg(ectx, ctx.object_auth_str,
-                &ctx.cmd_auth[0], &ctx.session[0]);
+                &ctx.cmd_auth.auths[0], &ctx.session[0]);
         if (!result) {
             LOG_ERR("Invalid object key authorization, got\"%s\"", ctx.object_auth_str);
             goto out;
@@ -316,11 +338,13 @@ int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.p) {
-        result = tpm2_auth_util_from_optarg(ectx, ctx.key_auth_str,
-                &ctx.cmd_auth[1], &ctx.session[1]);
-        if (!result) {
-            LOG_ERR("Invalid key handle authorization, got\"%s\"", ctx.key_auth_str);
-            goto out;
+        for (i = 0; i < (size_t) ctx.key_ctx_auth_nr; i++) {
+            result = tpm2_auth_util_from_optarg(ectx, ctx.key_auth_str[i],
+                     &ctx.cmd_auth.auths[i + 1], &ctx.session[i + 1]);
+            if (!result) {
+                LOG_ERR("Invalid key handle authorization, got\"%s\"", ctx.key_auth_str[i]);
+                goto out;
+            }
         }
     }
 

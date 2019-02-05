@@ -42,7 +42,6 @@
 #include "tpm2_auth_util.h"
 #include "tpm2_openssl.h"
 #include "tpm2_policy.h"
-#include "tpm2_session.h"
 #include "tpm2_util.h"
 
 static bool evaluate_populate_pcr_digests(TPML_PCR_SELECTION *pcr_selections,
@@ -110,7 +109,7 @@ static bool evaluate_populate_pcr_digests(TPML_PCR_SELECTION *pcr_selections,
 }
 
 static bool tpm2_policy_pcr_build(ESYS_CONTEXT *ectx,
-        tpm2_session *policy_session, const char *raw_pcrs_file,
+        ESYS_TR policy_sess_handle, const char *raw_pcrs_file,
         TPML_PCR_SELECTION *pcr_selections) {
 
     TPML_DIGEST pcr_values = { .count = 0 };
@@ -184,9 +183,7 @@ static bool tpm2_policy_pcr_build(ESYS_CONTEXT *ectx,
     }
 
     // Call the PolicyPCR command
-    ESYS_TR handle = tpm2_session_get_handle(policy_session);
-
-    TSS2_RC rval = Esys_PolicyPCR(ectx, handle,
+    TSS2_RC rval = Esys_PolicyPCR(ectx, policy_sess_handle,
                     ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
                     &pcr_digest, pcr_selections);
     if (rval != TPM2_RC_SUCCESS) {
@@ -198,12 +195,12 @@ static bool tpm2_policy_pcr_build(ESYS_CONTEXT *ectx,
 }
 
 bool tpm2_policy_build_pcr(ESYS_CONTEXT *ectx,
-        tpm2_session *policy_session,
+        ESYS_TR policy_sess_handle,
         const char *raw_pcrs_file,
         TPML_PCR_SELECTION *pcr_selections) {
 
     // Issue policy command.
-    bool result = tpm2_policy_pcr_build(ectx, policy_session,
+    bool result = tpm2_policy_pcr_build(ectx, policy_sess_handle,
             raw_pcrs_file, pcr_selections);
 
     if (!result) {
@@ -215,7 +212,7 @@ bool tpm2_policy_build_pcr(ESYS_CONTEXT *ectx,
 
 bool tpm2_policy_build_policyauthorize(
     ESYS_CONTEXT *ectx,
-    tpm2_session *policy_session,
+    ESYS_TR *policy_sess_handle,
     const char *policy_digest_path,
     const char *policy_qualifier_path,
     const char *verifying_pubkey_name_path,
@@ -288,17 +285,18 @@ bool tpm2_policy_build_policyauthorize(
         .hierarchy = TPM2_RH_OWNER,
         .digest = {0}
     };
-    result = tpm2_session_is_trial(policy_session);
-    if (!result) {
-        result = files_load_ticket(ticket_path, &check_ticket);
-        if (!result) {
-            LOG_ERR("Could not load verification ticket file");
-            return false;
-        }
-    }
+    // TODO: how to determine whether the given ESYS_TR session handle
+    // represents a trial session?
+    // result = tpm2_session_is_trial(policy_session);
+    // if (!result) {
+    //     result = files_load_ticket(ticket_path, &check_ticket);
+    //     if (!result) {
+    //         LOG_ERR("Could not load verification ticket file");
+    //         return false;
+    //     }
+    // }
 
-    ESYS_TR sess_handle = tpm2_session_get_handle(policy_session);
-    TSS2_RC rval = Esys_PolicyAuthorize(ectx, sess_handle,
+    TSS2_RC rval = Esys_PolicyAuthorize(ectx, policy_sess_handle,
                     ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
                     &approved_policy, &policy_qualifier, &key_sign,
                     &check_ticket);
@@ -311,10 +309,9 @@ bool tpm2_policy_build_policyauthorize(
 }
 
 bool tpm2_policy_build_policyor(ESYS_CONTEXT *ectx,
-    tpm2_session *policy_session, TPML_DIGEST policy_list) {
+    ESYS_TR policy_sess_handle, TPML_DIGEST policy_list) {
 
-    ESYS_TR sess_handle = tpm2_session_get_handle(policy_session);
-    TSS2_RC rval = Esys_PolicyOR(ectx, sess_handle,
+    TSS2_RC rval = Esys_PolicyOR(ectx, policy_sess_handle,
                     ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
                     &policy_list);
     if (rval != TPM2_RC_SUCCESS) {
@@ -326,11 +323,9 @@ bool tpm2_policy_build_policyor(ESYS_CONTEXT *ectx,
 }
 
 bool tpm2_policy_build_policypassword(ESYS_CONTEXT *ectx,
-        tpm2_session *session) {
+        ESYS_TR policy_sess_handle) {
 
-    ESYS_TR policy_session_handle = tpm2_session_get_handle(session);
-
-    TSS2_RC rval = Esys_PolicyPassword(ectx, policy_session_handle,
+    TSS2_RC rval = Esys_PolicyPassword(ectx, policy_sess_handle,
                         ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE);
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Esys_PolicyPassword, rval);
@@ -341,17 +336,17 @@ bool tpm2_policy_build_policypassword(ESYS_CONTEXT *ectx,
 }
 
 bool tpm2_policy_build_policysecret(ESYS_CONTEXT *ectx,
-    tpm2_session *policy_session, TPMS_AUTH_COMMAND session_data,
+    ESYS_TR policy_sess_handle, TPMS_AUTH_COMMAND session_data,
     ESYS_TR handle) {
 
-    ESYS_TR policy_session_handle = tpm2_session_get_handle(policy_session);
+    // TODO: update for _get_shandle() change
     ESYS_TR shandle = tpm2_auth_util_get_shandle(ectx, handle,
                         &session_data, policy_session);
     if (shandle == ESYS_TR_NONE) {
         LOG_ERR("Failed to get shandle");
         return false;
     }
-    TSS2_RC rval = Esys_PolicySecret(ectx, handle, policy_session_handle,
+    TSS2_RC rval = Esys_PolicySecret(ectx, handle, policy_sess_handle,
                     shandle, ESYS_TR_NONE, ESYS_TR_NONE,
                     NULL, NULL, NULL, 0, NULL, NULL);
     if (rval != TPM2_RC_SUCCESS) {
@@ -363,12 +358,10 @@ bool tpm2_policy_build_policysecret(ESYS_CONTEXT *ectx,
 }
 
 bool tpm2_policy_get_digest(ESYS_CONTEXT *ectx,
-        tpm2_session *session,
+        ESYS_TR policy_sess_handle,
         TPM2B_DIGEST **policy_digest) {
 
-    ESYS_TR handle = tpm2_session_get_handle(session);
-
-    TPM2_RC rval = Esys_PolicyGetDigest(ectx, handle,
+    TPM2_RC rval = Esys_PolicyGetDigest(ectx, policy_sess_handle,
                         ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
                         policy_digest);
     if (rval != TPM2_RC_SUCCESS) {
@@ -379,11 +372,9 @@ bool tpm2_policy_get_digest(ESYS_CONTEXT *ectx,
 }
 
 bool tpm2_policy_build_policycommandcode(ESYS_CONTEXT *ectx,
-    tpm2_session *session, uint32_t command_code) {
+    ESYS_TR policy_sess_handle, uint32_t command_code) {
 
-    ESYS_TR handle = tpm2_session_get_handle(session);
-
-    TPM2_RC rval = Esys_PolicyCommandCode(ectx, handle,
+    TPM2_RC rval = Esys_PolicyCommandCode(ectx, policy_sess_handle,
                     ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, command_code);
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Esys_PolicyCommandCode, rval);

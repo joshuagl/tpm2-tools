@@ -44,7 +44,6 @@
 #include "log.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_options.h"
-#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -106,19 +105,18 @@ int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
     UNUSED(flags);
 
     int rc = 1;
-    tpm2_session_data *session_data = tpm2_session_data_new(ctx.session.type);
-    if (!session_data) {
-        LOG_ERR("oom");
-        return rc;
-    }
+    ESYS_TR session_handle;
 
-    tpm2_session_set_authhash(session_data, ctx.session.halg);
+    TPMT_SYM_DEF symmetric;
+    symmetric.algorithm = TPM2_ALG_NULL;
 
-    tpm2_session *s = tpm2_session_new(ectx,
-            session_data);
-    if (!s) {
-        return rc;
-    }
+    TPM2B_NONCE nonce;
+    nonce.size = tpm2_alg_util_get_hash_size(TPM2_ALG_SHA1);
+
+    TSS2_RC rval = Esys_StartAuthSession(ectx, ESYS_TR_NONE, ESYS_TR_NONE,
+                    ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                    &nonce, ctx.session.type, &symmetric, ctx.session.halg,
+                    &session_handle);
 
     if (!ctx.output.path || ctx.output.path[0] == '\0') {
         ctx.output.path = "session.ctx";
@@ -130,7 +128,7 @@ int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
         goto out;
     }
 
-    result = tpm2_session_save(ectx, s, ctx_file);
+    result = files_save_tpm_context_to_path(ectx, session_handle, ctx_file);
     if (!result) {
         goto out;
     }
@@ -141,7 +139,6 @@ int tpm2_tool_onrun(ESYS_CONTEXT *ectx, tpm2_option_flags flags) {
 
 out:
     free(ctx_file);
-    tpm2_session_free(&s);
 
     return rc;
 }

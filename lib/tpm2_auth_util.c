@@ -41,7 +41,6 @@
 #include "files.h"
 #include "log.h"
 #include "tpm2_auth_util.h"
-#include "tpm2_session.h"
 #include "tpm2_util.h"
 
 #define HEX_PREFIX "hex:"
@@ -106,7 +105,7 @@ static bool handle_password(const char *password, TPMS_AUTH_COMMAND *auth) {
 }
 
 static bool handle_session(ESYS_CONTEXT *ectx, const char *path, TPMS_AUTH_COMMAND *auth,
-        tpm2_session **session) {
+        ESYS_TR *session_handle) {
 
     /* if it is session, then skip the prefix */
     path += SESSION_PREFIX_LEN;
@@ -137,26 +136,21 @@ static bool handle_session(ESYS_CONTEXT *ectx, const char *path, TPMS_AUTH_COMMA
         }
     }
 
-    *session = tpm2_session_restore(ectx, tmp);
-    if (!*session) {
-        return false;
-    }
-
-    // TODO: is setting this necessary?
-    ESYS_TR sessiontr = tpm2_session_get_handle(*session);
-    bool ok = tpm2_util_esys_handle_to_sys_handle(ectx, sessiontr,
-                &auth->sessionHandle);
+    ESYS_TR handle;
+    bool ok = files_load_tpm_context_from_path(ectx, &handle, tmp);
     if (!ok) {
-        LOG_WARN("Failed to set sessionHandle for auth");
-    }
-
-    bool is_trial = tpm2_session_is_trial(*session);
-    if (is_trial) {
-        LOG_ERR("A trial session cannot be used to authenticate, "
-                "Please use an hmac or policy session");
-        tpm2_session_free(session);
         return false;
     }
+    *session_handle = handle;
+
+    // TODO: figure out how to determine whether a session is a trial session
+    // bool is_trial = tpm2_session_is_trial(*session);
+    // if (is_trial) {
+    //     LOG_ERR("A trial session cannot be used to authenticate, "
+    //             "Please use an hmac or policy session");
+    //     tpm2_session_free(session);
+    //     return false;
+    // }
 
     return true;
 }
@@ -206,10 +200,10 @@ out:
 }
 
 bool tpm2_auth_util_from_optarg(ESYS_CONTEXT *ectx, const char *password,
-    TPMS_AUTH_COMMAND *auth, tpm2_session **session) {
+    TPMS_AUTH_COMMAND *auth, ESYS_TR *session_handle) {
 
     bool is_session = !strncmp(password, SESSION_PREFIX, SESSION_PREFIX_LEN);
-    if (is_session && !session) {
+    if (is_session && !session_handle) {
         LOG_ERR("Tool does not support sessions for this auth value");
         return false;
     }
@@ -220,12 +214,12 @@ bool tpm2_auth_util_from_optarg(ESYS_CONTEXT *ectx, const char *password,
     }
 
     return is_session ?
-         handle_session(ectx, password, auth, session) :
+         handle_session(ectx, password, auth, session_handle) :
          handle_password(password, auth);
 }
 
 ESYS_TR tpm2_auth_util_get_shandle(ESYS_CONTEXT *ectx, ESYS_TR for_auth,
-            TPMS_AUTH_COMMAND *auth, tpm2_session *session) {
+            TPMS_AUTH_COMMAND *auth, ESYS_TR session_handle) {
 
     // If we have a valid auth value, prefer it
     if (auth->hmac.size > 0) {
@@ -238,8 +232,8 @@ ESYS_TR tpm2_auth_util_get_shandle(ESYS_CONTEXT *ectx, ESYS_TR for_auth,
     }
 
     // If we have a valid session, use that
-    if (session) {
-        return tpm2_session_get_handle(session);
+    if (session_handle != ESYS_TR_NONE) {
+        return session_handle;
     }
 
     // For an empty auth and no session use ESYS_TR_PASSWORD

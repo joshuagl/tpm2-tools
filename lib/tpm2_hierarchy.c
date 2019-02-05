@@ -135,7 +135,7 @@ ESYS_TR tpm2_tpmi_hierarchy_to_esys_tr(TPMI_RH_PROVISION inh) {
 
 bool tpm2_hierarchy_create_primary(ESYS_CONTEXT *ectx,
         TPMS_AUTH_COMMAND *sdata,
-        tpm2_session *sess,
+        ESYS_TR session,
         tpm2_hierarchy_pdata *objdata) {
 
     ESYS_TR hierarchy;
@@ -143,7 +143,8 @@ bool tpm2_hierarchy_create_primary(ESYS_CONTEXT *ectx,
     hierarchy = tpm2_tpmi_hierarchy_to_esys_tr(objdata->in.hierarchy);
 
     TSS2_RC rval;
-    ESYS_TR shandle1 = tpm2_auth_util_get_shandle(ectx, hierarchy, sdata, sess);
+    ESYS_TR shandle1 = tpm2_auth_util_get_shandle(ectx, hierarchy, sdata,
+                        session);
     if (shandle1 == ESYS_TR_NONE) {
         LOG_ERR("Couldn't get shandle for hierarchy");
         return false;

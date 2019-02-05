@@ -1,8 +1,6 @@
 #ifndef LIB_TPM2_CTX_MGMT_H_
 #define LIB_TPM2_CTX_MGMT_H_
 
-#include "tpm2_session.h"
-
 /**
  * Invokes evictcontrol for manipulating the persistence of loaded
  * objects in TPM memory.
@@ -12,6 +10,8 @@
  *  The authorisation hierarchy, either TPM2_RH_OWNER or TPM2_RH_PLATFORM
  * @param sdata
  *  The authorization data for auth.
+ * @param session_handle
+ *  ESYS_TR handle of the session
  * @param objhandle
  *  The object handle of a loaded object to manipulate.
  * @param phandle
@@ -23,7 +23,7 @@
 bool tpm2_ctx_mgmt_evictcontrol(ESYS_CONTEXT *context,
         ESYS_TR auth,
         TPMS_AUTH_COMMAND *sdata,
-        tpm2_session *sess,
+        ESYS_TR session_handle,
         ESYS_TR objhandle,
         TPMI_DH_PERSISTENT phandle);
 

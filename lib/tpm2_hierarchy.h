@@ -35,7 +35,6 @@
 #include <stdbool.h>
 
 #include <tss2/tss2_esys.h>
-#include "tpm2_session.h"
 
 typedef enum tpm2_hierarchy_flags tpm2_hierarchy_flags;
 
@@ -112,7 +111,8 @@ struct tpm2_hierarchy_pdata {
  *  The authorization data for the hierarchy the primary object
  *  is associated with.
  * @param session
- *  The authorised session for accessing the primary object
+ *  The ESYS_TR handle for the authorised session for accessing the primary
+ *  object.
  * @param objdata
  *  The objects data configuration.
  * @return
@@ -121,7 +121,7 @@ struct tpm2_hierarchy_pdata {
  */
 bool tpm2_hierarchy_create_primary(ESYS_CONTEXT *context,
         TPMS_AUTH_COMMAND *sdata,
-        tpm2_session *sess,
+        ESYS_TR session,
         tpm2_hierarchy_pdata *objdata);
 
 /**

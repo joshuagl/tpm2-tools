@@ -9,13 +9,14 @@
 bool tpm2_ctx_mgmt_evictcontrol(ESYS_CONTEXT *ectx,
         ESYS_TR auth,
         TPMS_AUTH_COMMAND *sdata,
-        tpm2_session *sess,
+        ESYS_TR session_handle,
         ESYS_TR objhandle,
         TPMI_DH_PERSISTENT phandle) {
 
     TSS2_RC rval;
 
-    ESYS_TR shandle1 = tpm2_auth_util_get_shandle(ectx, auth, sdata, sess);
+    ESYS_TR shandle1 = tpm2_auth_util_get_shandle(ectx, auth, sdata,
+                            session_handle);
     if (shandle1 == ESYS_TR_NONE) {
         LOG_ERR("Couldn't get shandle for eviction target");
         return false;

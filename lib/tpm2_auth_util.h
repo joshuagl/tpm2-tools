@@ -32,9 +32,6 @@
 #define SRC_PASSWORD_UTIL_H_
 
 #include <tss2/tss2_esys.h>
-
-#include "tpm2_session.h"
-
 /**
  * Convert a password argument to a valid TPM2B_AUTH structure. Passwords can
  * be specified in two forms: string and hex-string and are identified by a
@@ -62,14 +59,14 @@
  *  The optarg containing the password string.
  * @param dest
  *  The TPM2B_AUTH structure to copy the string into.
- * @param session
- *  If a session is used, returns the session data.
+ * @param session_handle
+ *  If a session is used, returns the ESYS_TR handle of the session.
  * @return
  *  true on success, false on failure.
  */
 bool tpm2_auth_util_from_optarg(ESYS_CONTEXT *ctx,
         const char *password, TPMS_AUTH_COMMAND *auth,
-        tpm2_session **session);
+        ESYS_TR *session_handle);
 
 /**
  * Set up authorisation for a handle and return a session handle for use in
@@ -81,12 +78,12 @@ bool tpm2_auth_util_from_optarg(ESYS_CONTEXT *ctx,
  *  The target handle which needs authorisation setting up
  * @param auth
  *  Auth command for the handle
- * @param session
- *  Session for the handle
+ * @param session_handle
+ *  ESYS_TR handle for the session
  * @return
  *  The authorised session handle of type ESYS_TR for the target handle
  */
 ESYS_TR tpm2_auth_util_get_shandle(ESYS_CONTEXT *ectx, ESYS_TR for_auth,
-                TPMS_AUTH_COMMAND *auth, tpm2_session *session);
+                TPMS_AUTH_COMMAND *auth, ESYS_TR session_handle);
 
 #endif /* SRC_PASSWORD_UTIL_H_ */

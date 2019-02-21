@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015-2018, Intel Corporation
+// Copyright (c) 2015-2019, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -276,12 +276,19 @@ static bool create_ak(ESYS_CONTEXT *ectx) {
         return false;
     }
 
-    TPM2_RC rval = Esys_PolicySecret(ectx, ESYS_TR_RH_ENDORSEMENT, sess_handle,
-                    shandle, ESYS_TR_NONE, ESYS_TR_NONE,
-                    NULL, NULL, NULL, 0, NULL, NULL);
+    TPM2B_NONCE *nonce_tpm = NULL;
+    TPM2_RC rval = Esys_TRSess_GetNonceTPM(ectx, sess_handle, &nonce_tpm);
+    if (rval != TPM2_RC_SUCCESS) {
+        LOG_PERR(Esys_TRSess_GetNonceTPM, rval);
+        return false;
+    }
+    rval = Esys_PolicySecret(ectx, ESYS_TR_RH_ENDORSEMENT, sess_handle,
+                shandle, ESYS_TR_NONE, ESYS_TR_NONE,
+                nonce_tpm, NULL, NULL, 0, NULL, NULL);
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Esys_PolicySecret, rval);
-        return false;
+        retval = false;
+        goto nonceout;
     }
     LOG_INFO("Esys_PolicySecret success");
 
@@ -462,12 +469,13 @@ static bool create_ak(ESYS_CONTEXT *ectx) {
             goto nameout;
         }
     }
-
 nameout:
     free(key_name);
 out:
     free(out_public);
     free(out_private);
+nonceout:
+    free(nonce_tpm);
 
     return retval;
 }
